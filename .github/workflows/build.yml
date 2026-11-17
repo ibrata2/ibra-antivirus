@@ -50,6 +50,14 @@ jobs:
           Copy-Item (Join-Path $y.DirectoryName '*') vendor/yara -Recurse -Force
           Get-ChildItem vendor/yara
 
+      - name: Remove debug files and show bundle size
+        shell: pwsh
+        run: |
+          Get-ChildItem vendor -Recurse -Include *.pdb,*.lib,*.exp,*.ilk -File | Remove-Item -Force
+          Get-ChildItem vendor -Recurse -Directory | Where-Object { $_.Name -in @('include','lib','share','doc','docs','pkgconfig','cmake') } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem vendor -Recurse -File | Sort-Object Length -Descending | Select-Object -First 15 | ForEach-Object { "{0,10:N1} MB  {1}" -f ($_.Length/1MB), $_.FullName }
+          "TOTAL vendor: {0:N1} MB" -f ((Get-ChildItem vendor -Recurse -File | Measure-Object Length -Sum).Sum/1MB)
+
       - name: Verify YARA rules compile
         shell: pwsh
         run: |
@@ -58,11 +66,17 @@ jobs:
           & $exe.FullName -w rules/ibra.yar tmp/clean.txt
           if ($LASTEXITCODE -ne 0) { throw "YARA rules failed to compile" }
 
-      - name: Build installer (and publish release on tag)
+      - name: Build installer and publish release
         shell: pwsh
         run: |
           # Publishes a GitHub Release named after the version in package.json (creates tag vX.Y.Z)
           npx electron-builder --win --x64 --publish always
+
+      - name: Show installed app size
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/win-unpacked -Recurse -File | Sort-Object Length -Descending | Select-Object -First 15 | ForEach-Object { "{0,10:N1} MB  {1}" -f ($_.Length/1MB), $_.FullName }
+          Get-ChildItem dist -Filter *.exe | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length/1MB) }
 
       - uses: actions/upload-artifact@v4
         with:
