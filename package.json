@@ -1,0 +1,56 @@
+{
+  "name": "ibra-antivirus",
+  "productName": "IBRA ANTIVIRUS",
+  "version": "1.0.0",
+  "description": "IBRA ANTIVIRUS - برنامج حماية مجاني لويندوز",
+  "author": "Ibrahim Al-Khazraji (IBRAPROGRAM)",
+  "homepage": "https://ibraprogram.netlify.app/",
+  "license": "MIT",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64",
+    "release": "electron-builder --win --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.ibraprogram.antivirus",
+    "productName": "IBRA ANTIVIRUS",
+    "copyright": "IBRAPROGRAM - برمجة وتطوير ابراهيم الخزرجي",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": [ "src/**/*", "assets/**/*", "package.json" ],
+    "extraResources": [
+      { "from": "vendor", "to": "vendor", "filter": [ "**/*" ] },
+      { "from": "rules", "to": "rules", "filter": [ "**/*" ] },
+      { "from": "assets", "to": "assets", "filter": [ "**/*" ] }
+    ],
+    "win": {
+      "target": [ { "target": "nsis", "arch": [ "x64" ] } ],
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "artifactName": "IBRA-ANTIVIRUS-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "IBRA ANTIVIRUS",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerLanguages": [ "ar_SA", "en_US" ],
+      "multiLanguageInstaller": true,
+      "include": "build/installer.nsh",
+      "runAfterFinish": true
+    },
+    "publish": [ { "provider": "github", "owner": "ibrata2", "repo": "ibra-antivirus", "releaseType": "release" } ]
+  }
+}

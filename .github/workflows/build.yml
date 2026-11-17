@@ -1,0 +1,68 @@
+name: Build IBRA ANTIVIRUS
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Bundle ClamAV engine (official Cisco-Talos release)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor/clamav, tmp | Out-Null
+          gh release download -R Cisco-Talos/clamav -p "*win.x64.zip" -D tmp --clobber
+          $zip = Get-ChildItem tmp -Filter "*win.x64.zip" | Select-Object -First 1
+          if (-not $zip) { throw "ClamAV zip not found" }
+          Expand-Archive $zip.FullName -DestinationPath tmp/clamav -Force
+          $scan = Get-ChildItem tmp/clamav -Recurse -Filter clamscan.exe | Select-Object -First 1
+          Copy-Item (Join-Path $scan.DirectoryName '*') vendor/clamav -Recurse -Force
+          & vendor/clamav/clamscan.exe --version
+
+      - name: Bundle YARA engine (official VirusTotal release)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor/yara | Out-Null
+          gh release download -R VirusTotal/yara -p "*win64*.zip" -D tmp --clobber
+          $zip = Get-ChildItem tmp -Filter "*win64*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "YARA zip not found" }
+          Expand-Archive $zip.FullName -DestinationPath tmp/yara -Force
+          $y = Get-ChildItem tmp/yara -Recurse -Filter "yara64.exe" | Select-Object -First 1
+          if (-not $y) { $y = Get-ChildItem tmp/yara -Recurse -Filter "yara.exe" | Select-Object -First 1 }
+          Copy-Item (Join-Path $y.DirectoryName '*') vendor/yara -Recurse -Force
+          Get-ChildItem vendor/yara
+
+      - name: Verify YARA rules compile
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem vendor/yara -Filter "yara*.exe" | Where-Object { $_.Name -notlike "yarac*" } | Select-Object -First 1
+          Set-Content tmp/clean.txt "hello"
+          & $exe.FullName -w rules/ibra.yar tmp/clean.txt
+          if ($LASTEXITCODE -ne 0) { throw "YARA rules failed to compile" }
+
+      - name: Build installer (and publish release on tag)
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/*") { npx electron-builder --win --x64 --publish always }
+          else { npx electron-builder --win --x64 --publish never }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IBRA-ANTIVIRUS-Setup
+          path: dist/*.exe
