@@ -26,7 +26,8 @@ class Store {
       fwKnown: [],
       fwBlockedCache: [],
       browserBlocked: 0,
-      browserLog: []
+      browserLog: [],
+      extAutoDone: false
     };
     this.data = { ...this.defaults, ...this._read(this.file, {}) };
     this.history = this._read(this.histFile, []);

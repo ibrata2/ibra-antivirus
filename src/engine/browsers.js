@@ -49,4 +49,45 @@ function openExtensionsPage(id) {
   return true;
 }
 
-module.exports = { installed, prepareExtension, openExtensionsPage };
+// process name used by the helper -> browser name reported by the extension heartbeat
+const HEARTBEAT_NAME = { chrome: 'Chrome', msedge: 'Edge', brave: 'Brave', opera: 'Opera', vivaldi: 'Vivaldi', browser: 'Yandex' };
+const PROCESS_OF = { chrome: 'chrome', edge: 'msedge', brave: 'brave', opera: 'opera', operagx: 'opera', vivaldi: 'vivaldi', yandex: 'browser' };
+
+function helperExe() { return P.vendor('ibra-ext-installer.exe'); }
+function canAutoInstall() { return process.platform === 'win32' && P.exists(helperExe()); }
+
+/**
+ * Installs the extension automatically, the same way IBRA Download Manager does:
+ * opens the extensions page, turns on developer mode, presses "Load unpacked" and picks the folder.
+ * onEvent receives every JSON line from the helper ({start}|{step}|{result}|{done}).
+ */
+function autoInstall({ which = 'all', skip = [], lang = 'ar' }, onEvent = () => {}) {
+  return new Promise(resolve => {
+    if (!canAutoInstall()) return resolve({ ok: false, error: 'helper-missing' });
+    let dir;
+    try { dir = prepareExtension(); } catch (e) { return resolve({ ok: false, error: e.message }); }
+    const args = ['--install', which, '--dir', dir, '--lang', lang];
+    if (skip.length) args.push('--skip', skip.join(','));
+    const p = spawn(helperExe(), args, { windowsHide: true });
+    const results = [];
+    let buf = '';
+    let final = null;
+    p.stdout.on('data', d => {
+      buf += d.toString('utf8');
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line); } catch { continue; }
+        if (ev.result) results.push(ev);
+        if (ev.done) final = ev;
+        onEvent(ev);
+      }
+    });
+    p.stderr.on('data', () => {});
+    p.on('error', e => resolve({ ok: false, error: e.message }));
+    p.on('close', () => resolve({ ok: !!(final && final.ok), none: !!(final && final.none), cancelled: !!(final && final.cancelled), results, dir }));
+  });
+}
+
+module.exports = { installed, prepareExtension, openExtensionsPage, autoInstall, canAutoInstall, HEARTBEAT_NAME, PROCESS_OF };

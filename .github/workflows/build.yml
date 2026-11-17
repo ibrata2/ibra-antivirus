@@ -50,6 +50,16 @@ jobs:
           Copy-Item (Join-Path $y.DirectoryName '*') vendor/yara -Recurse -Force
           Get-ChildItem vendor/yara
 
+      - name: Build browser-extension installer helper (.NET Framework 4.8, built into Windows)
+        shell: pwsh
+        run: |
+          dotnet build tools/ext-installer/ExtInstaller.csproj -c Release -o tmp/extinst
+          if ($LASTEXITCODE -ne 0) { throw "helper build failed" }
+          Copy-Item tmp/extinst/ibra-ext-installer.exe vendor/ -Force
+          if (Test-Path tmp/extinst/ibra-ext-installer.exe.config) { Copy-Item tmp/extinst/ibra-ext-installer.exe.config vendor/ -Force }
+          & vendor/ibra-ext-installer.exe --list
+          "helper exit: $LASTEXITCODE"
+
       - name: Remove debug files and show bundle size
         shell: pwsh
         run: |

@@ -211,7 +211,9 @@ async function toApp(path, body) {
 async function heartbeat() {
   const s = await get({ stats: {}, listCount: 0 });
   const ua = navigator.userAgent;
-  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : navigator.brave ? 'Brave' : /Chrome\//.test(ua) ? 'Chrome' : 'Browser';
+  const brands = ((navigator.userAgentData && navigator.userAgentData.brands) || []).map(b => b.brand).join(' ');
+  const browser = /Edg\//.test(ua) || /Edge/.test(brands) ? 'Edge' : /OPR\//.test(ua) || /Opera/.test(brands) ? 'Opera' : /YaBrowser/.test(ua) || /Yandex/.test(brands) ? 'Yandex'
+    : /Vivaldi/.test(ua + brands) ? 'Vivaldi' : navigator.brave || /Brave/.test(brands) ? 'Brave' : /Chrome\//.test(ua) ? 'Chrome' : 'Browser';
   const r = await toApp('/heartbeat', { browser, version: chrome.runtime.getManifest().version, stats: s.stats, listCount: s.listCount });
   await chrome.storage.session.set({ appConnected: !!r, appLang: r && r.lang });
   if (r && r.lang) { const cur = await chrome.storage.sync.get({ lang: null }); if (!cur.lang) await chrome.storage.sync.set({ lang: r.lang }); }

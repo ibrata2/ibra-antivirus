@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; font: 14px/1.5 "Segoe UI", Tahoma, Arial, sans-serif; color: #12261b; user-select: none; }
+  .card { margin: 16px; padding: 20px 22px; border-radius: 18px; background: rgba(255,255,255,.96); border: 2px solid #12a150;
+          box-shadow: 0 14px 40px rgba(0,0,0,.28); }
+  .head { display: flex; align-items: center; gap: 12px; }
+  .head img { width: 44px; height: 44px; animation: p 1.4s ease-in-out infinite; }
+  @keyframes p { 50% { transform: scale(1.07); } }
+  .head b { font-size: 17px; }
+  .warn { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #fff4e6; color: #b45309; font-weight: 700; border: 1px solid #fbd38d; }
+  .bar { height: 6px; border-radius: 6px; background: #e3eee8; overflow: hidden; margin-top: 12px; }
+  .bar i { display: block; height: 100%; width: 35%; background: #12a150; border-radius: 6px; animation: m 1.2s linear infinite; }
+  @keyframes m { from { transform: translateX(300%); } to { transform: translateX(-100%); } }
+  ul { list-style: none; margin-top: 10px; max-height: 120px; overflow: hidden; }
+  li { font-size: 13px; color: #33493d; margin-top: 2px; }
+  li.ok { color: #0b7d3c; font-weight: 600; } li.bad { color: #c0141f; font-weight: 600; }
+  .hint { margin-top: 8px; font-size: 11.5px; color: #6b7c72; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><img src="../../assets/shield-orange.png" alt=""><b id="title"></b></div>
+  <div class="warn" id="warn"></div>
+  <div class="bar"><i></i></div>
+  <ul id="steps"></ul>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+  const T = {
+    ar: { title: b => `جاري تنصيب إضافة الحماية على ${b}`, warn: '⚠ لا تضغط على أي شيء ولا تحرّك الماوس لحين انتهاء تنصيب الإضافة', hint: 'للإيقاف اضغط Esc', prep: 'تجهيز...' },
+    en: { title: b => `Installing the protection extension on ${b}`, warn: '⚠ Do not click anything or move the mouse until the extension is installed', hint: 'Press Esc to stop', prep: 'Preparing...' }
+  };
+  let L = T.ar;
+  function update(d) {
+    if (d.lang) { L = T[d.lang] || T.ar; document.documentElement.lang = d.lang; document.documentElement.dir = d.lang === 'ar' ? 'rtl' : 'ltr'; }
+    document.getElementById('warn').textContent = L.warn;
+    document.getElementById('hint').textContent = L.hint;
+    if (d.browser) { document.getElementById('title').textContent = L.title(d.browser); document.getElementById('steps').innerHTML = ''; }
+    if (d.step || d.result) {
+      const li = document.createElement('li');
+      li.textContent = '• ' + (d.step || d.result);
+      if (d.cls) li.className = d.cls;
+      const ul = document.getElementById('steps');
+      ul.appendChild(li);
+      while (ul.children.length > 5) ul.removeChild(ul.firstChild);
+    }
+  }
+  update({ lang: 'ar', browser: '...' });
+</script>
+</body>
+</html>

@@ -37,7 +37,10 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - تهديد', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'تم عزله بالحجر الصحي',
     usbTitle: 'فلاشة جديدة', usbBody: d => `جاري فحص ${d}`, usbClean: d => `الفلاشة ${d} نظيفة ✔`,
     tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`,
-    fwNewTitle: 'برنامج جديد يتصل بالإنترنت', fwNewBody: n => `${n}\nاضغط هنا إذا تريد تمنعه`, siteBlocked: 'تم حظر موقع خطر بالمتصفح'
+    fwNewTitle: 'برنامج جديد يتصل بالإنترنت', fwNewBody: n => `${n}\nاضغط هنا إذا تريد تمنعه`, siteBlocked: 'تم حظر موقع خطر بالمتصفح',
+    extAskTitle: 'تنصيب حماية المتصفح', extAskMsg: b => `IBRA ANTIVIRUS راح ينصّب إضافة الحماية تلقائياً على: ${b}`,
+    extAskDetail: '⚠ لا تضغط على أي شيء ولا تحرّك الماوس لحين انتهاء التنصيب (حوالي ١٥ ثانية لكل متصفح).', extStart: 'ابدأ التنصيب', extLater: 'لاحقاً',
+    extDoneTitle: 'تم تنصيب حماية المتصفح ✔', extFailTitle: 'ما اكتمل تنصيب الإضافة', extFailHint: 'جرّب مرة ثانية من صفحة «المتصفح»، أو استخدم التنصيب اليدوي هناك.', extConfirmed: 'متصلة بالبرنامج ✔', extLoaded: 'انحملت (أعد تشغيل المتصفح إذا ما ظهر الدرع)'
   },
   en: {
     protected: 'Your PC is protected', scanning: 'Scanning...', danger: 'Threat detected!', open: 'Open IBRA ANTIVIRUS',
@@ -45,7 +48,10 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - Threat', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'Moved to quarantine',
     usbTitle: 'New USB drive', usbBody: d => `Scanning ${d}`, usbClean: d => `USB drive ${d} is clean ✔`,
     tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`,
-    fwNewTitle: 'New program is using the internet', fwNewBody: n => `${n}\nClick here if you want to block it`, siteBlocked: 'A dangerous site was blocked in the browser'
+    fwNewTitle: 'New program is using the internet', fwNewBody: n => `${n}\nClick here if you want to block it`, siteBlocked: 'A dangerous site was blocked in the browser',
+    extAskTitle: 'Install browser protection', extAskMsg: b => `IBRA ANTIVIRUS will install the protection extension automatically on: ${b}`,
+    extAskDetail: '⚠ Do not click anything or move the mouse until it finishes (about 15 seconds per browser).', extStart: 'Start', extLater: 'Later',
+    extDoneTitle: 'Browser protection installed ✔', extFailTitle: 'Extension install did not finish', extFailHint: 'Try again from the Browser page, or use the manual install there.', extConfirmed: 'connected to the app ✔', extLoaded: 'loaded (restart the browser if the shield does not appear)'
   }
 };
 const t = () => T[store.get('lang')] || T.ar;
@@ -245,6 +251,90 @@ function argScanTarget(argv) {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
 }
 
+// ---------------------------------------------------------------- automatic extension install (same method as IBRA Download Manager)
+let extInstalling = false;
+function onlineBrowserNames() { return (bridge ? bridge.status() : []).filter(b => b.online).map(b => b.name); }
+
+function makeOverlay() {
+  const { screen } = require('electron');
+  const wa = screen.getPrimaryDisplay().workArea;
+  const w = 560, h = 300;
+  const ov = new BrowserWindow({
+    width: w, height: h, x: Math.round(wa.x + (wa.width - w) / 2), y: wa.y + wa.height - h - 24,
+    frame: false, transparent: true, resizable: false, movable: false, focusable: false, skipTaskbar: true,
+    alwaysOnTop: true, show: false, hasShadow: false, webPreferences: { contextIsolation: true, sandbox: true }
+  });
+  ov.setAlwaysOnTop(true, 'screen-saver');
+  ov.setIgnoreMouseEvents(true);   // clicks pass through so the browser keeps control
+  ov.loadFile(path.join(__dirname, 'ui', 'overlay.html'));
+  ov.once('ready-to-show', () => ov.showInactive());
+  return ov;
+}
+
+async function installExtension({ which = 'all', ask = false } = {}) {
+  if (extInstalling) return { busy: true };
+  if (!browsers.canAutoInstall()) return { ok: false, error: 'helper-missing' };
+  const found = browsers.installed();
+  const online = onlineBrowserNames();
+  // skip browsers whose extension is already connected
+  const skip = which === 'all' ? found.filter(b => online.includes(browsers.HEARTBEAT_NAME[browsers.PROCESS_OF[b.id]])).map(b => browsers.PROCESS_OF[b.id]) : [];
+  const todo = which === 'all' ? found.filter(b => !skip.includes(browsers.PROCESS_OF[b.id])) : found.filter(b => browsers.PROCESS_OF[b.id] === which);
+  if (!todo.length) return { ok: true, nothing: true };
+  if (ask) {
+    const r = await dialog.showMessageBox(win && win.isVisible() ? win : undefined, {
+      type: 'question', title: 'IBRA ANTIVIRUS', icon: P.asset('icon.png'),
+      message: t().extAskMsg(todo.map(b => b.name).join(store.get('lang') === 'ar' ? '، ' : ', ')),
+      detail: t().extAskDetail, buttons: [t().extStart, t().extLater], defaultId: 0, cancelId: 1, noLink: true
+    });
+    if (r.response !== 0) return { ok: false, later: true };
+  }
+  extInstalling = true;
+  push('ext-install', { status: 'start' });
+  const lang = store.get('lang');
+  const wasVisible = win && !win.isDestroyed() && win.isVisible();
+  if (wasVisible) win.minimize();
+  const ov = makeOverlay();
+  const send = d => { if (!ov.isDestroyed()) ov.webContents.executeJavaScript(`update(${JSON.stringify(d)})`).catch(() => {}); };
+  ov.webContents.once('did-finish-load', () => send({ lang }));
+  const started = Date.now();
+  const res = await browsers.autoInstall({ which, skip, lang }, ev => {
+    if (ev.start) send({ lang, browser: ev.start });
+    else if (ev.step) send({ step: ev.step });
+    else if (ev.result) send({ result: ev.message, cls: ev.ok ? 'ok' : 'bad' });
+    push('ext-install', { status: 'event', ev });
+  });
+  // confirm: wait for each installed extension to call the app
+  const lines = [];
+  for (const r of res.results || []) {
+    let confirmed = false;
+    if (r.ok) {
+      const name = browsers.HEARTBEAT_NAME[r.process];
+      const until = Date.now() + 15000;
+      while (Date.now() < until) {
+        const st = bridge.status();
+        if (st.some(b => b.lastSeen >= started && (b.name === name || !name))) { confirmed = true; break; }
+        await new Promise(x => setTimeout(x, 700));
+      }
+      if (!confirmed && bridge.status().some(b => b.lastSeen >= started)) confirmed = true;
+    }
+    lines.push((r.ok ? '✓ ' : '✗ ') + r.result + ': ' + (r.ok ? (confirmed ? t().extConfirmed : t().extLoaded) : r.message));
+  }
+  if (!ov.isDestroyed()) ov.close();
+  if (wasVisible && win && !win.isDestroyed()) { win.restore(); win.focus(); }
+  extInstalling = false;
+  store.set('extAutoDone', true);
+  const ok = (res.results || []).length > 0 && res.results.every(r => r.ok);
+  if (!res.cancelled && lines.length) {
+    await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+      type: ok ? 'info' : 'warning', title: 'IBRA ANTIVIRUS', icon: P.asset(ok ? 'shield-green.png' : 'shield-orange.png'),
+      message: ok ? t().extDoneTitle : t().extFailTitle, detail: lines.join('\n') + (ok ? '' : '\n\n' + t().extFailHint), buttons: ['OK'], noLink: true
+    });
+  }
+  push('ext-install', { status: 'done', res });
+  refresh();
+  return { ...res, lines };
+}
+
 // ---------------------------------------------------------------- IPC
 function ipc() {
   ipcMain.handle('state', () => snapshot());
@@ -307,6 +397,8 @@ function ipc() {
       return { ok: true, dir, opened };
     } catch (e) { return { ok: false, error: e.message }; }
   });
+  ipcMain.handle('browser-auto', (_, which) => installExtension({ which: which || 'all', ask: false }));
+  ipcMain.handle('browser-can-auto', () => browsers.canAutoInstall());
   ipcMain.handle('browser-folder', () => { try { const d = browsers.prepareExtension(); shell.openPath(d); return d; } catch { return null; } });
   ipcMain.handle('browser-log-clear', () => { store.set('browserLog', []); refresh(); return true; });
   ipcMain.on('win', (_, a) => {
@@ -411,6 +503,14 @@ app.whenReady().then(() => {
 
   const target = argScanTarget(process.argv);
   if (target) setTimeout(() => startScan({ type: 'custom', targets: [target] }), 1200);
+
+  // first launch after setup: install the browser extension automatically (asks once)
+  if (!store.get('extAutoDone') && !STARTED_HIDDEN && !target) {
+    setTimeout(() => {
+      if (onlineBrowserNames().length && browsers.installed().length <= onlineBrowserNames().length) { store.set('extAutoDone', true); return; }
+      installExtension({ which: 'all', ask: true }).then(r => { if (r && r.later) store.set('extAutoDone', true); });
+    }, 7000);
+  }
 });
 
 app.on('before-quit', () => { quitting = true; });

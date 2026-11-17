@@ -356,7 +356,10 @@ async function renderBrowser() {
   $('#brBlocked').textContent = S.browser.blocked || 0;
   const list = await api.browsers();
   const conn = S.browser.connected || [];
-  const nameMap = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', opera: 'Opera', operagx: 'Opera', vivaldi: 'Vivaldi', yandex: 'Browser' };
+  const nameMap = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', opera: 'Opera', operagx: 'Opera', vivaldi: 'Vivaldi', yandex: 'Yandex' };
+  const procMap = { chrome: 'chrome', edge: 'msedge', brave: 'brave', opera: 'opera', operagx: 'opera', vivaldi: 'vivaldi', yandex: 'browser' };
+  const canAuto = await api.browserCanAuto();
+  $('#brAutoAll').hidden = !canAuto || !list.length;
   $('#brList').innerHTML = list.length ? list.map(b => {
     const c = conn.find(x => x.name === nameMap[b.id] && x.online);
     return `<div class="bcard glass ${c ? 'on' : ''}"><div class="top">${IC.globe}<b>${esc(b.name)}</b></div>
@@ -364,6 +367,7 @@ async function renderBrowser() {
       <button class="btn ${c ? 'ghost' : 'primary'} sm" data-inst="${esc(b.id)}">${esc(c ? L.reinstall : L.install)}</button></div>`;
   }).join('') : `<div class="empty"><span class="tx">${esc(L.noBrowsers)}</span></div>`;
   $$('#brList [data-inst]').forEach(b => b.onclick = async () => {
+    if (canAuto) { b.disabled = true; b.textContent = L.brInstalling; await api.browserAuto(procMap[b.dataset.inst]); S = await api.state(); renderBrowser(); return; }
     const r = await api.browserInstall(b.dataset.inst);
     if (r.ok) { $('#brSteps').hidden = false; $('#brDir').textContent = r.dir; } else toast(L.failed + ': ' + r.error);
   });
@@ -379,6 +383,9 @@ async function renderBrowser() {
     : `<div class="empty"><span class="tx">${esc(L.brLogEmpty)}</span></div>`;
 }
 $('#brOpenDir').onclick = () => api.browserFolder();
+$('#brAutoAll').onclick = async () => { const b = $('#brAutoAll'); b.disabled = true; await api.browserAuto('all'); b.disabled = false; S = await api.state(); renderBrowser(); };
+$('#brManual').onclick = async () => { const d = await api.browserFolder(); if (d) { $('#brSteps').hidden = false; $('#brDir').textContent = d; } };
+api.onExtInstall(e => { if (e.status === 'done' && $('#page-browser').classList.contains('active')) setTimeout(renderBrowser, 500); });
 $('#brLogClear').onclick = async () => { await api.browserLogClear(); S = await api.state(); renderBrowser(); };
 api.onBrowser(b => { if (!S) return; S.browser = b; if ($('#page-browser').classList.contains('active')) renderBrowser(); if ($('#page-home').classList.contains('active')) renderHome(); });
 
