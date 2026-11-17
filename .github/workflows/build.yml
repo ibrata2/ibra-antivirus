@@ -2,7 +2,9 @@ name: Build IBRA ANTIVIRUS
 
 on:
   push:
+    branches: [ main ]
     tags: [ 'v*' ]
+    paths-ignore: [ 'README.md', 'LICENSE' ]
   workflow_dispatch:
 
 permissions:
@@ -59,8 +61,8 @@ jobs:
       - name: Build installer (and publish release on tag)
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -like "refs/tags/*") { npx electron-builder --win --x64 --publish always }
-          else { npx electron-builder --win --x64 --publish never }
+          # Publishes a GitHub Release named after the version in package.json (creates tag vX.Y.Z)
+          npx electron-builder --win --x64 --publish always
 
       - uses: actions/upload-artifact@v4
         with:
