@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "IBRA ANTIVIRUS - Browser Protection",
+  "short_name": "IBRA ANTIVIRUS",
+  "version": "1.1.0",
+  "description": "حماية المتصفح من IBRA ANTIVIRUS: يحظر المواقع الخطرة والتصيد ويفحص التنزيلات. Blocks malicious and phishing sites.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoE09gXb9yuLwuD1GweiCr8AAmv6DKd2FjihEZ+OZ/BjDmTt8x2HAqCFrO+O7c49ypcSXUT6UTaozQ517BvV2ajMqX3BmN/KOVZc/F2ZLfIAemPdQIdw6Av8Nxewn6AGWpJA15APZ+EO+n2oh5T+B8vZAHM69BomGhwjpcY8NqXDGdQcLTj29DDu+y/H3YU1ccOxjF9m8GErQ/hQW83AEFMZrIFA7VjX3VVhDXZUn2mOUJ7ry2u+IzhXKp7ePzrJ6XxWkkhzKz/zbfwamliBkPaiJioiVSe0AgfwNI8AJtkEv4mRy6ZuluiWD4rE9SygNSdf+YSon65LHr1rsaMNfGwIDAQAB",
+  "icons": { "16": "icons/green-16.png", "32": "icons/green-32.png", "48": "icons/green-48.png", "128": "icons/green-128.png" },
+  "action": { "default_popup": "popup.html", "default_title": "IBRA ANTIVIRUS", "default_icon": { "16": "icons/green-16.png", "32": "icons/green-32.png" } },
+  "background": { "service_worker": "bg.js" },
+  "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess", "storage", "unlimitedStorage", "alarms", "tabs", "webNavigation", "downloads", "notifications"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [ { "matches": ["http://*/*", "https://*/*"], "js": ["frame.js"], "run_at": "document_idle", "all_frames": false } ],
+  "web_accessible_resources": [ { "resources": ["warning.html", "warning.js", "warning.css", "icons/*"], "matches": ["<all_urls>"] } ],
+  "homepage_url": "https://ibraprogram.netlify.app/"
+}

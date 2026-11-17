@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ar"><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:330px;font:13px/1.5 "Segoe UI",Tahoma,Arial,sans-serif;color:#12261b;background:linear-gradient(160deg,#f7fbf8,#e3f2e9)}
+.head{display:flex;align-items:center;gap:12px;padding:16px;border-bottom:1px solid rgba(20,60,38,.08);direction:ltr}
+.head img{width:46px;height:46px}
+.head b{display:block;font-size:15px;color:#0b7d3c;letter-spacing:.3px}
+.head span{font-size:12px;color:#5d6f65}
+.site{margin:12px 14px 4px;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid rgba(20,60,38,.08)}
+.site .host{direction:ltr;font-family:Consolas,monospace;font-size:12px;color:#5d6f65;word-break:break-all}
+.site .v{font-weight:700;margin-top:2px;unicode-bidi:plaintext}
+.ok{color:#0b7d3c}.warn{color:#d56a0c}.bad{color:#c0141f}
+.stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:10px 14px}
+.stats div{background:#fff;border-radius:12px;padding:8px;text-align:center;border:1px solid rgba(20,60,38,.08)}
+.stats b{display:block;font-size:18px;color:#0b7d3c}.stats span{font-size:11px;color:#5d6f65}
+.row{display:flex;align-items:center;gap:10px;padding:9px 16px}
+.row span{flex:1;unicode-bidi:plaintext}
+.sw{width:40px;height:22px;border-radius:20px;background:#c9d3ce;position:relative;border:0;cursor:pointer;flex:none}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.2s}
+.sw.on{background:#12a150}.sw.on::after{left:21px}
+.foot{padding:10px 16px 14px;font-size:11.5px;color:#5d6f65;border-top:1px solid rgba(20,60,38,.08);margin-top:6px}
+.foot .line{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.foot .line span{flex:1;unicode-bidi:plaintext}
+button.lnk{font:inherit;background:#fff;border:1px solid rgba(20,60,38,.15);border-radius:8px;padding:4px 10px;cursor:pointer}
+.dot{width:8px;height:8px;border-radius:50%;background:#c9d3ce;flex:none}.dot.on{background:#12a150}
+a{color:#0b7d3c;text-decoration:none;font-weight:600}
+</style></head>
+<body>
+<div class="head"><img id="shield" src="icons/green-128.png" alt=""><div><b>IBRA ANTIVIRUS</b><span id="status"></span></div></div>
+<div class="site"><div class="host" id="host"></div><div class="v" id="verdict"></div></div>
+<div class="stats"><div><b id="today">0</b><span id="lToday"></span></div><div><b id="total">0</b><span id="lTotal"></span></div><div><b id="dl">0</b><span id="lDl"></span></div></div>
+<div class="row"><span id="lEnabled"></span><button class="sw" data-k="enabled"></button></div>
+<div class="row"><span id="lFrame"></span><button class="sw" data-k="frame"></button></div>
+<div class="row"><span id="lPhish"></span><button class="sw" data-k="phishingHeuristics"></button></div>
+<div class="row"><span id="lDown"></span><button class="sw" data-k="scanDownloads"></button></div>
+<div class="foot">
+  <div class="line"><span id="lists"></span><button class="lnk" id="upd"></button></div>
+  <div class="line"><i class="dot" id="appDot"></i><span id="app"></span></div>
+  <div class="line"><a href="https://ibraprogram.netlify.app/" target="_blank" id="site"></a></div>
+</div>
+<script src="popup.js"></script>
+</body></html>

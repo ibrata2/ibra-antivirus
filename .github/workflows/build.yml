@@ -75,6 +75,13 @@ jobs:
           # Publishes a GitHub Release named after the version in package.json (creates tag vX.Y.Z)
           npx electron-builder --win --x64 --publish always
 
+      - name: Attach browser extension zip to the release
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Compress-Archive -Path browser-extension/* -DestinationPath "dist/IBRA-ANTIVIRUS-Browser-Extension-$v.zip" -Force
+          gh release upload "v$v" "dist/IBRA-ANTIVIRUS-Browser-Extension-$v.zip" --clobber
+
       - name: Show installed app size
         shell: pwsh
         run: |

@@ -14,11 +14,15 @@ const defender = require('./engine/defender');
 const heur = require('./engine/heuristics');
 const sys = require('./engine/sys');
 const { RealTime, UsbMonitor } = require('./engine/realtime');
+const firewall = require('./engine/firewall');
+const browsers = require('./engine/browsers');
+const { Bridge } = require('./engine/bridge');
 
 app.setAppUserModelId('com.ibraprogram.antivirus');
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
-let win, tray, store, quarantine, scanner, realtime, usb;
+let win, tray, store, quarantine, scanner, realtime, usb, bridge, fwMonitor;
+let fwProfiles = null;
 let quitting = false;
 let activeThreats = [];   // detected and not yet handled
 let lastResult = null;
@@ -32,14 +36,16 @@ const T = {
     quick: 'فحص سريع', pause: 'إيقاف الحماية الفورية', resume: 'تشغيل الحماية الفورية', quit: 'خروج',
     threatTitle: 'IBRA ANTIVIRUS - تهديد', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'تم عزله بالحجر الصحي',
     usbTitle: 'فلاشة جديدة', usbBody: d => `جاري فحص ${d}`, usbClean: d => `الفلاشة ${d} نظيفة ✔`,
-    tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`
+    tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`,
+    fwNewTitle: 'برنامج جديد يتصل بالإنترنت', fwNewBody: n => `${n}\nاضغط هنا إذا تريد تمنعه`, siteBlocked: 'تم حظر موقع خطر بالمتصفح'
   },
   en: {
     protected: 'Your PC is protected', scanning: 'Scanning...', danger: 'Threat detected!', open: 'Open IBRA ANTIVIRUS',
     quick: 'Quick scan', pause: 'Pause real-time protection', resume: 'Resume real-time protection', quit: 'Exit',
     threatTitle: 'IBRA ANTIVIRUS - Threat', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'Moved to quarantine',
     usbTitle: 'New USB drive', usbBody: d => `Scanning ${d}`, usbClean: d => `USB drive ${d} is clean ✔`,
-    tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`
+    tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`,
+    fwNewTitle: 'New program is using the internet', fwNewBody: n => `${n}\nClick here if you want to block it`, siteBlocked: 'A dangerous site was blocked in the browser'
   }
 };
 const t = () => T[store.get('lang')] || T.ar;
@@ -56,7 +62,7 @@ function snapshot() {
   const db = clam.dbInfo();
   return {
     state: state(),
-    settings: store.all(),
+    settings: (({ fwKnown, browserLog, fwBlockedCache, ...rest }) => rest)(store.all()),
     scan: scanner.status(),
     activeThreats,
     lastResult,
@@ -69,6 +75,8 @@ function snapshot() {
     realtime: !!(realtime && realtime.active),
     usb: !!(usb && usb.timer),
     quarantineCount: quarantine.list().length,
+    browser: { connected: bridge ? bridge.status() : [], blocked: store.get('browserBlocked') || 0, log: (store.get('browserLog') || []).slice(0, 30) },
+    firewall: { profiles: fwProfiles, blockedCount: (store.get('fwBlockedCache') || []).length, monitor: !!(fwMonitor && fwMonitor.timer) },
     version: app.getVersion(),
     platform: process.platform
   };
@@ -210,6 +218,7 @@ function setSetting(k, v) {
   if (k === 'realtime') v ? realtime.start() : realtime.stop();
   if (k === 'usbAutoScan') v ? usb.start() : usb.stop();
   if (k === 'runAtStartup') applyStartup();
+  if (k === 'fwAskNew') v ? fwMonitor.start() : fwMonitor.stop();
   refresh();
 }
 function applyStartup() {
@@ -272,6 +281,34 @@ function ipc() {
   });
   ipcMain.handle('app-update', () => checkAppUpdate(true));
   ipcMain.handle('app-install-update', () => { try { quitting = true; require('electron-updater').autoUpdater.quitAndInstall(); } catch {} });
+  // ---- firewall
+  ipcMain.handle('fw-state', async () => {
+    const [conns, blocked, profiles] = await Promise.all([firewall.connections(), firewall.blocked(), firewall.profiles()]);
+    fwProfiles = profiles; store.set('fwBlockedCache', blocked.map(b => b.path));
+    return { conns, blocked, profiles };
+  });
+  ipcMain.handle('fw-block', async (_, paths) => { const r = await firewall.block(paths.filter(Boolean)); refresh(); return r; });
+  ipcMain.handle('fw-unblock', async (_, paths) => { const r = await firewall.unblock(paths.filter(Boolean)); refresh(); return r; });
+  ipcMain.handle('fw-enable', () => firewall.enableAll());
+  ipcMain.handle('fw-pick', async () => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Programs', extensions: ['exe'] }] });
+    if (r.canceled || !r.filePaths.length) return { ok: false };
+    return firewall.block(r.filePaths);
+  });
+  ipcMain.handle('file-icon', async (_, p) => { try { return (await app.getFileIcon(p, { size: 'normal' })).toDataURL(); } catch { return null; } });
+  // ---- browser protection
+  ipcMain.handle('browsers', () => browsers.installed().map(b => ({ id: b.id, name: b.name })));
+  ipcMain.handle('browser-install', (_, id) => {
+    try {
+      const dir = browsers.prepareExtension();
+      require('electron').clipboard.writeText(dir);
+      const opened = browsers.openExtensionsPage(id);
+      shell.openPath(dir);
+      return { ok: true, dir, opened };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('browser-folder', () => { try { const d = browsers.prepareExtension(); shell.openPath(d); return d; } catch { return null; } });
+  ipcMain.handle('browser-log-clear', () => { store.set('browserLog', []); refresh(); return true; });
   ipcMain.on('win', (_, a) => {
     if (!win) return;
     if (a === 'min') win.minimize();
@@ -322,6 +359,41 @@ app.whenReady().then(() => {
     notify(t().usbTitle, t().usbBody(d));
     startScan({ type: 'usb', targets: [d], removableRoots: [d] });
   });
+
+  // browser extension bridge
+  bridge = new Bridge({
+    lang: () => store.get('lang'),
+    scan: async (file, url) => {
+      const th = await scanner.checkFile(file, {}, { clam: true });
+      if (th) { th.source = 'browser'; th.url = url; handleThreat(th, 'browser'); return { name: th.name, severity: th.severity }; }
+      return null;
+    }
+  });
+  bridge.on('change', () => push('browser', snapshot().browser));
+  bridge.on('event', ev => {
+    if (ev.type === 'blocked') {
+      store.set('browserBlocked', (store.get('browserBlocked') || 0) + 1);
+      const log = store.get('browserLog') || [];
+      log.unshift({ url: ev.url, reason: ev.reason, date: Date.now(), action: 'blocked' });
+      store.set('browserLog', log.slice(0, 200));
+    } else if (ev.type === 'allowed') {
+      const log = store.get('browserLog') || [];
+      log.unshift({ url: ev.url, date: Date.now(), action: 'allowed' });
+      store.set('browserLog', log.slice(0, 200));
+    }
+    push('browser', snapshot().browser);
+  });
+  bridge.start();
+  try { if (fs.existsSync(P.data('browser-extension'))) browsers.prepareExtension(); } catch {}
+
+  // firewall: watch for programs that start using the internet
+  fwMonitor = new firewall.Monitor(store);
+  fwMonitor.on('new-app', c => {
+    push('fw-new', c);
+    notify(t().fwNewTitle, t().fwNewBody(c.desc || c.name), () => push('navigate', 'firewall'));
+  });
+  if (store.get('fwAskNew')) setTimeout(() => fwMonitor.start(), 8000);
+  firewall.profiles().then(p => { fwProfiles = p; refresh(); });
 
   ipc();
   createWindow();

@@ -55,7 +55,12 @@ function go(page) {
   if (page === 'history') renderHistory();
   if (page === 'settings') renderSettings();
   if (page === 'protect') renderProtect();
+  if (page === 'browser') renderBrowser();
+  if (page === 'firewall') renderFirewall(true);
+  clearInterval(fwTimer);
+  if (page === 'firewall') fwTimer = setInterval(() => renderFirewall(false), 6000);
 }
+let fwTimer = null;
 $$('.nav').forEach(n => n.onclick = () => go(n.dataset.page));
 $$('[data-win]').forEach(b => b.onclick = () => api.win(b.dataset.win));
 $$('.lang-switch button').forEach(b => b.onclick = async () => { S = await api.set('lang', b.dataset.lang); render(); });
@@ -75,7 +80,7 @@ function render() {
 }
 
 function protectionComplete() {
-  return S.realtime && S.settings.usbAutoScan && (!S.engines.clamav.installed || S.engines.clamav.ready);
+  return S.realtime && S.settings.usbAutoScan && (!S.engines.clamav.installed || S.engines.clamav.ready) && fwAllOn() !== false;
 }
 
 function renderHome() {
@@ -110,15 +115,16 @@ function renderHome() {
     { ic: IC.brain, t: L.ibraTitle, d: L.ibraDesc, on: true },
     { ic: IC.dna, t: L.yaraTitle, d: S.engines.yara ? L.yaraOn : L.yaraOff, on: S.engines.yara && S.settings.useYara },
     { ic: IC.win, t: L.defTitle, d: S.engines.defender ? L.defOn : L.defOff, on: S.engines.defender && S.settings.useDefender },
-    { ic: IC.globe, t: L.browserTitle, d: L.browserDesc, soon: true },
-    { ic: IC.wall, t: L.fwTitle, d: L.fwDesc, soon: true }
+    { ic: IC.globe, t: L.navBrowser, d: browserOnline().length ? L.brOnSub(browserOnline().join('، ')) : L.brOffSub, on: browserOnline().length > 0, page: 'browser' },
+    { ic: IC.wall, t: L.navFirewall, d: fwAllOn() === false ? L.fwOffSub(fwOffNames()) : L.fwOnSub, on: fwAllOn() !== false, page: 'firewall' }
   ];
   $('#tiles').innerHTML = tiles.map((x, i) => `
-    <div class="tile glass ${x.soon ? 'soon' : x.on ? '' : 'off'}" ${x.key ? `data-key="${x.key}"` : ''}>
+    <div class="tile glass ${x.soon ? 'soon' : x.on ? '' : 'off'}" ${x.key ? `data-key="${x.key}"` : ''} ${x.page ? `data-go="${x.page}" style="cursor:pointer"` : ''}>
       <div class="tile-top"><div class="tile-ic">${x.ic}</div><b class="tx">${esc(x.t)}</b>${x.key ? `<button class="switch ${x.on ? 'on' : ''}" data-set="${x.key}"></button>` : `<span class="dot"></span>`}</div>
       <p class="tx">${esc(x.d)}</p>${x.extra || ''}
     </div>`).join('');
   bindSwitches($('#tiles'));
+  $$('#tiles [data-go]').forEach(t => t.onclick = () => go(t.dataset.go));
   const tb = $('#tileDb'); if (tb) tb.onclick = updateDb;
 }
 
@@ -265,10 +271,11 @@ function renderProtect() {
     row({ ic: IC.db, t: L.sClam, d: !c.installed ? L.dbNotInstalled : c.ready ? L.dbReady(fmtDate(c.date)) : L.dbMissing, key: c.installed ? 'useClamAV' : null, val: S.settings.useClamAV }),
     row({ ic: IC.dna, t: L.sYara, d: S.engines.yara ? L.yaraOn : L.yaraOff, key: S.engines.yara ? 'useYara' : null, val: S.settings.useYara }),
     row({ ic: IC.win, t: L.sDef, d: S.engines.defender ? L.defOn : L.defOff, key: S.engines.defender ? 'useDefender' : null, val: S.settings.useDefender }),
-    row({ ic: IC.globe, t: L.browserTitle, d: L.browserDesc, soon: true }),
-    row({ ic: IC.wall, t: L.fwTitle, d: L.fwDesc, soon: true })
+    row({ ic: IC.globe, t: L.navBrowser, d: browserOnline().length ? L.brOnSub(browserOnline().join('، ')) : L.brOffSub, right: `<button class="btn ghost sm" data-go2="browser">${esc(L.navBrowser)}</button>` }),
+    row({ ic: IC.wall, t: L.navFirewall, d: fwAllOn() === false ? L.fwOffSub(fwOffNames()) : L.fwOnSub, right: `<button class="btn ghost sm" data-go2="firewall">${esc(L.navFirewall)}</button>` })
   ].join('');
   bindSwitches($('#protectRows'));
+  $$('#protectRows [data-go2]').forEach(b => b.onclick = () => go(b.dataset.go2));
 }
 
 // ---------------------------------------------------------------- settings
@@ -338,6 +345,90 @@ async function renderHistory() {
   }).join('') : `<div class="empty"><span class="tx">${esc(L.hEmpty)}</span></div>`;
 }
 $('#btnHClear').onclick = async () => { await api.historyClear(); renderHistory(); };
+
+// ---------------------------------------------------------------- browser protection page
+function browserOnline() { return ((S && S.browser && S.browser.connected) || []).filter(b => b.online).map(b => b.name); }
+async function renderBrowser() {
+  const on = browserOnline();
+  $('#brShield').src = on.length ? SH.green : SH.orange;
+  $('#brTitle').textContent = on.length ? L.brOn : L.brOff;
+  $('#brSub').textContent = on.length ? L.brOnSub(on.join('، ')) : L.brOffSub;
+  $('#brBlocked').textContent = S.browser.blocked || 0;
+  const list = await api.browsers();
+  const conn = S.browser.connected || [];
+  const nameMap = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', opera: 'Opera', operagx: 'Opera', vivaldi: 'Vivaldi', yandex: 'Browser' };
+  $('#brList').innerHTML = list.length ? list.map(b => {
+    const c = conn.find(x => x.name === nameMap[b.id] && x.online);
+    return `<div class="bcard glass ${c ? 'on' : ''}"><div class="top">${IC.globe}<b>${esc(b.name)}</b></div>
+      <div class="st tx">${c ? esc(L.connected) : esc(L.notConnected)}</div>
+      <button class="btn ${c ? 'ghost' : 'primary'} sm" data-inst="${esc(b.id)}">${esc(c ? L.reinstall : L.install)}</button></div>`;
+  }).join('') : `<div class="empty"><span class="tx">${esc(L.noBrowsers)}</span></div>`;
+  $$('#brList [data-inst]').forEach(b => b.onclick = async () => {
+    const r = await api.browserInstall(b.dataset.inst);
+    if (r.ok) { $('#brSteps').hidden = false; $('#brDir').textContent = r.dir; } else toast(L.failed + ': ' + r.error);
+  });
+  $('#brFeatures').innerHTML = [
+    row({ ic: IC.bug, t: L.fMal, d: L.fMalD }), row({ ic: IC.lock, t: L.fPhish, d: L.fPhishD }),
+    row({ ic: IC.shield, t: L.fFrame, d: L.fFrameD }), row({ ic: IC.globe, t: L.fWarn, d: L.fWarnD }), row({ ic: IC.folder, t: L.fDl, d: L.fDlD })
+  ].join('');
+  const log = S.browser.log || [];
+  const rName = { malware: L.rMalware, phishing: L.rPhishing, suspicious: L.rSuspicious };
+  $('#brLogClear').hidden = !log.length;
+  $('#brLog').innerHTML = log.length ? log.map(x => `<div class="item glass ${x.action === 'allowed' ? 'med' : ''}"><div class="ic">${x.action === 'allowed' ? IC.globe : IC.bug}</div>
+    <div class="info"><b class="tx">${esc(x.action === 'allowed' ? L.aAllowed : (rName[x.reason] || L.rSuspicious))}</b><div class="path">${esc(x.url)}</div><div class="meta">${esc(fmtDate(x.date))}</div></div></div>`).join('')
+    : `<div class="empty"><span class="tx">${esc(L.brLogEmpty)}</span></div>`;
+}
+$('#brOpenDir').onclick = () => api.browserFolder();
+$('#brLogClear').onclick = async () => { await api.browserLogClear(); S = await api.state(); renderBrowser(); };
+api.onBrowser(b => { if (!S) return; S.browser = b; if ($('#page-browser').classList.contains('active')) renderBrowser(); if ($('#page-home').classList.contains('active')) renderHome(); });
+
+// ---------------------------------------------------------------- firewall page
+let fwData = null;
+const newApps = new Set();
+const iconCache = {};
+function fwAllOn() { const p = S && S.firewall && S.firewall.profiles; if (!p || !Object.keys(p).length) return null; return Object.values(p).every(Boolean); }
+function fwOffNames() { const p = (S.firewall && S.firewall.profiles) || {}; return Object.keys(p).filter(k => !p[k]).map(k => (L.profiles && L.profiles[k]) || k).join('، '); }
+async function iconFor(p) { if (!p) return null; if (!(p in iconCache)) iconCache[p] = await api.fileIcon(p); return iconCache[p]; }
+async function renderFirewall(full) {
+  if (full && !fwData) $('#fwLive').innerHTML = `<div class="empty"><span class="tx">${esc(L.fwLoading)}</span></div>`;
+  $('#fwRows').innerHTML = row({ ic: IC.bell || IC.shield, t: L.fwAsk, d: L.fwAskD, key: 'fwAskNew', val: S.settings.fwAskNew });
+  bindSwitches($('#fwRows'));
+  fwData = await api.fwState();
+  S.firewall.profiles = fwData.profiles;
+  const on = fwAllOn() !== false;
+  $('#fwShield').src = on ? SH.green : SH.red;
+  $('#fwTitle').textContent = on ? L.fwOn : L.fwOff;
+  $('#fwSub').textContent = on ? L.fwOnSub : L.fwOffSub(fwOffNames());
+  $('#fwEnable').hidden = on;
+  const blockedSet = new Set(fwData.blocked.map(b => b.path.toLowerCase()));
+  const live = fwData.conns.filter(c => !c.path || !blockedSet.has(c.path.toLowerCase()));
+  const icons = await Promise.all(live.map(c => iconFor(c.path)));
+  $('#fwLive').innerHTML = live.length ? live.map((c, i) => `<div class="item glass ok ${newApps.has((c.path || '').toLowerCase()) ? 'new' : ''}" data-fp="${esc(c.path)}">
+      <div class="ic">${icons[i] ? `<img src="${icons[i]}" alt="">` : IC.win}</div>
+      <div class="info"><b>${esc(c.desc || c.name)}${newApps.has((c.path || '').toLowerCase()) ? `<span class="tag medium">${esc(L.newApp)}</span>` : ''}<span class="tag">${esc(L.conns(c.connections))}</span></b>
+      <div class="path">${esc(c.path || c.name)}</div><div class="meta" style="direction:ltr;text-align:left">${esc(c.remotes.join('  ·  '))}</div></div>
+      <div class="acts">${c.path ? `<button class="btn danger sm" data-fw="block">${esc(L.block)}</button>` : ''}</div></div>`).join('')
+    : `<div class="empty"><span class="tx">${esc(L.fwLiveEmpty)}</span></div>`;
+  const bicons = await Promise.all(fwData.blocked.map(b => iconFor(b.path)));
+  $('#fwBlocked').innerHTML = fwData.blocked.length ? fwData.blocked.map((b, i) => `<div class="item glass" data-fp="${esc(b.path)}">
+      <div class="ic">${bicons[i] ? `<img src="${bicons[i]}" alt="">` : IC.wall}</div>
+      <div class="info"><b>${esc(b.name)}</b><div class="path">${esc(b.path)}</div></div>
+      <div class="acts"><button class="btn primary sm" data-fw="allow">${esc(L.allow)}</button></div></div>`).join('')
+    : `<div class="empty"><span class="tx">${esc(L.fwBlockedEmpty)}</span></div>`;
+  $$('#page-firewall [data-fw]').forEach(b => b.onclick = async () => {
+    const p = b.closest('[data-fp]').dataset.fp;
+    b.disabled = true;
+    const r = b.dataset.fw === 'block' ? await api.fwBlock([p]) : await api.fwUnblock([p]);
+    toast(r.ok ? L.fwDone : L.fwDenied);
+    renderFirewall(false);
+  });
+  const fb = $('#fwBadge'); fb.textContent = newApps.size || ''; fb.classList.toggle('on', newApps.size > 0);
+}
+$('#fwRefresh').onclick = () => renderFirewall(false);
+$('#fwPick').onclick = async () => { const r = await api.fwPick(); if (r.ok) toast(L.fwDone); else if (r.denied) toast(L.fwDenied); renderFirewall(false); };
+$('#fwEnable').onclick = async () => { const r = await api.fwEnable(); toast(r.ok ? L.fwDone : L.fwDenied); renderFirewall(false); };
+api.onFwNew(c => { if (c.path) newApps.add(c.path.toLowerCase()); const fb = $('#fwBadge'); fb.textContent = newApps.size; fb.classList.add('on'); if ($('#page-firewall').classList.contains('active')) renderFirewall(false); });
+api.onNavigate(p => go(p));
 
 // ---------------------------------------------------------------- start
 (async () => { S = await api.state(); render(); })();

@@ -21,7 +21,12 @@ class Store {
       maxFileSizeMB: 150,
       exclusions: [],
       lastScan: null,
-      lastDbUpdate: null
+      lastDbUpdate: null,
+      fwAskNew: true,
+      fwKnown: [],
+      fwBlockedCache: [],
+      browserBlocked: 0,
+      browserLog: []
     };
     this.data = { ...this.defaults, ...this._read(this.file, {}) };
     this.history = this._read(this.histFile, []);

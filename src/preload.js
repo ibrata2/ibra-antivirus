@@ -25,8 +25,19 @@ contextBridge.exposeInMainWorld('ibra', {
   appUpdate: () => ipcRenderer.invoke('app-update'),
   appInstallUpdate: () => ipcRenderer.invoke('app-install-update'),
   pathForFile: f => { try { return webUtils.getPathForFile(f); } catch { return f.path; } },
+  fwState: () => ipcRenderer.invoke('fw-state'),
+  fwBlock: paths => ipcRenderer.invoke('fw-block', paths),
+  fwUnblock: paths => ipcRenderer.invoke('fw-unblock', paths),
+  fwEnable: () => ipcRenderer.invoke('fw-enable'),
+  fwPick: () => ipcRenderer.invoke('fw-pick'),
+  fileIcon: p => ipcRenderer.invoke('file-icon', p),
+  browsers: () => ipcRenderer.invoke('browsers'),
+  browserInstall: id => ipcRenderer.invoke('browser-install', id),
+  browserFolder: () => ipcRenderer.invoke('browser-folder'),
+  browserLogClear: () => ipcRenderer.invoke('browser-log-clear'),
   win: a => ipcRenderer.send('win', a),
   onState: on('state'), onProgress: on('progress'), onThreat: on('threat'), onScanDone: on('scan-done'),
   onDbProgress: on('db-progress'), onDbDone: on('db-done'), onRealtime: on('realtime-event'),
-  onAppUpdate: on('app-update'), onWin: on('win')
+  onAppUpdate: on('app-update'), onWin: on('win'),
+  onBrowser: on('browser'), onFwNew: on('fw-new'), onNavigate: on('navigate')
 });

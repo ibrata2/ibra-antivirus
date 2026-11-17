@@ -26,6 +26,8 @@
     <button class="nav active" data-page="home"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/></svg><span class="tx" data-t="navHome"></span></button>
     <button class="nav" data-page="scan"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><span class="tx" data-t="navScan"></span><i class="badge" id="qBadge"></i></button>
     <button class="nav" data-page="protect"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0116 0"/><path d="M12 12l4-4"/><circle cx="12" cy="12" r="1.5"/><path d="M4 17h16"/></svg><span class="tx" data-t="navProtect"></span></button>
+    <button class="nav" data-page="browser"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><span class="tx" data-t="navBrowser"></span></button>
+    <button class="nav" data-page="firewall"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M3 10h18M3 15h18M9 5v5M15 10v5M9 15v4"/></svg><span class="tx" data-t="navFirewall"></span><i class="badge" id="fwBadge"></i></button>
     <button class="nav" data-page="quarantine"><svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="11" rx="2"/><path d="M8 9V6a4 4 0 018 0v3"/></svg><span class="tx" data-t="navQuarantine"></span></button>
     <button class="nav" data-page="history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg><span class="tx" data-t="navHistory"></span></button>
     <button class="nav" data-page="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span class="tx" data-t="navSettings"></span></button>
@@ -115,6 +117,50 @@
     <section class="page" id="page-protect">
       <h2 class="tx" data-t="navProtect"></h2>
       <div class="rows" id="protectRows"></div>
+    </section>
+
+    <!-- BROWSER PROTECTION -->
+    <section class="page" id="page-browser">
+      <div class="hero glass sm-hero">
+        <img id="brShield" class="shield sm" src="../../assets/shield-green.png" alt="">
+        <div class="hero-text"><h2 class="tx" id="brTitle"></h2><p class="tx muted" id="brSub"></p></div>
+        <div class="stat-pills"><div><b id="brBlocked">0</b><span class="tx" data-t="brBlockedL"></span></div></div>
+      </div>
+      <h3 class="tx" data-t="brInstallT"></h3>
+      <p class="tx muted small" data-t="brInstallD"></p>
+      <div class="browser-grid" id="brList"></div>
+      <div class="steps glass" id="brSteps" hidden>
+        <b class="tx" data-t="brStepsT"></b>
+        <ol>
+          <li class="tx" data-t="brStep1"></li>
+          <li class="tx" data-t="brStep2"></li>
+          <li class="tx" data-t="brStep3"></li>
+          <li class="tx" data-t="brStep4"></li>
+        </ol>
+        <div class="path" id="brDir"></div>
+        <div class="ex-btns"><button class="btn ghost sm" id="brOpenDir"><span class="tx" data-t="brOpenDir"></span></button></div>
+      </div>
+      <h3 class="tx" data-t="brFeaturesT"></h3>
+      <div class="rows" id="brFeatures"></div>
+      <div class="page-head" style="margin-top:22px"><h3 class="tx" data-t="brLogT" style="margin:0"></h3><div class="grow"></div><button class="btn ghost sm" id="brLogClear"><span class="tx" data-t="clearHistory"></span></button></div>
+      <div class="threat-list" id="brLog"></div>
+    </section>
+
+    <!-- FIREWALL -->
+    <section class="page" id="page-firewall">
+      <div class="hero glass sm-hero">
+        <img id="fwShield" class="shield sm" src="../../assets/shield-green.png" alt="">
+        <div class="hero-text"><h2 class="tx" id="fwTitle"></h2><p class="tx muted" id="fwSub"></p></div>
+        <button class="btn primary" id="fwEnable" hidden><span class="tx" data-t="fwEnable"></span></button>
+      </div>
+      <div class="rows" id="fwRows"></div>
+      <div class="page-head" style="margin-top:20px"><h3 class="tx" data-t="fwLiveT" style="margin:0"></h3><div class="grow"></div>
+        <button class="btn ghost sm" id="fwRefresh"><span class="tx" data-t="refresh"></span></button>
+        <button class="btn ghost sm" id="fwPick"><span class="tx" data-t="fwPick"></span></button></div>
+      <p class="tx muted small" data-t="fwLiveD"></p>
+      <div class="threat-list" id="fwLive"></div>
+      <h3 class="tx" data-t="fwBlockedT"></h3>
+      <div class="threat-list" id="fwBlocked"></div>
     </section>
 
     <!-- QUARANTINE -->

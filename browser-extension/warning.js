@@ -1,0 +1,38 @@
+// Warning page shown instead of a dangerous site
+const TXT = {
+  ar: { title: 'موقع خطر!', lead: 'IBRA ANTIVIRUS أوقف فتح هذا الموقع لحمايتك.',
+    why: { malware: 'هذا الموقع مسجّل بقوائم عالمية لأنه ينشر فيروسات أو برامج خبيثة.', phishing: 'هذا موقع تصيّد: يقلّد موقع معروف حتى يسرق حسابك أو كلمة السر أو فلوسك.', suspicious: 'هذا الموقع يستخدم حيل معروفة عند المواقع المزيفة.' },
+    brand: b => ` يتظاهر إنه ${b}.`, back: 'رجوع للأمان', more: 'تفاصيل وخيارات متقدمة',
+    risk: 'إذا متأكد إن الموقع آمن تگدر تدخله. ننصح بعدم إدخال كلمات سر أو معلومات بطاقة.', anyway: 'أدخل رغم التحذير (غير آمن)', confirm: 'متأكد؟ الموقع ممكن يضر جهازك أو يسرق حساباتك.', credit: 'برمجة وتطوير ابراهيم الخزرجي' },
+  en: { title: 'Dangerous website!', lead: 'IBRA ANTIVIRUS stopped this site to protect you.',
+    why: { malware: 'This site is on global lists for spreading viruses or malware.', phishing: 'This is a phishing site: it imitates a known site to steal your account, password or money.', suspicious: 'This site uses tricks typical of fake websites.' },
+    brand: b => ` It pretends to be ${b}.`, back: 'Back to safety', more: 'Details and advanced options',
+    risk: 'If you are sure this site is safe you can open it. Do not enter passwords or card details.', anyway: 'Enter anyway (unsafe)', confirm: 'Are you sure? This site may harm your PC or steal your accounts.', credit: 'by Ibrahim Al-Khazraji' }
+};
+const q = new URLSearchParams(location.search);
+const reason = q.get('r') || 'malware';
+const brand = q.get('b') || '';
+const target = decodeURIComponent(location.hash.slice(1));
+
+chrome.runtime.sendMessage({ type: 'blocked', url: target, reason }, res => {
+  const lang = (res && res.lang) || ((navigator.language || 'ar').startsWith('ar') ? 'ar' : 'en');
+  const L = TXT[lang] || TXT.ar;
+  document.documentElement.lang = lang;
+  document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  document.title = 'IBRA ANTIVIRUS — ' + L.title;
+  const $ = id => document.getElementById(id);
+  $('title').textContent = L.title;
+  $('lead').textContent = L.lead;
+  $('url').textContent = target;
+  $('why').textContent = (L.why[reason] || L.why.malware) + (brand ? L.brand(brand) : '');
+  $('back').textContent = L.back;
+  $('more').textContent = L.more;
+  $('risk').textContent = L.risk;
+  $('anyway').textContent = L.anyway;
+  $('credit').textContent = L.credit;
+  $('back').onclick = () => chrome.runtime.sendMessage({ type: 'safe-exit' });
+  $('anyway').onclick = () => {
+    if (!/^https?:\/\//.test(target) || !confirm(L.confirm)) return;
+    chrome.runtime.sendMessage({ type: 'allow', url: target }, () => location.replace(target));
+  };
+});
