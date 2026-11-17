@@ -54,6 +54,9 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem vendor -Recurse -Include *.pdb,*.lib,*.exp,*.ilk -File | Remove-Item -Force
+          # tools we never call (signature authoring / bytecode / rule compiler / manual)
+          Remove-Item vendor/clamav/sigtool.exe, vendor/clamav/clambc.exe, vendor/yara/yarac64.exe, vendor/yara/yarac.exe -Force -ErrorAction SilentlyContinue
+          Remove-Item vendor/clamav/UserManual -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem vendor -Recurse -Directory | Where-Object { $_.Name -in @('include','lib','share','doc','docs','pkgconfig','cmake') } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           Get-ChildItem vendor -Recurse -File | Sort-Object Length -Descending | Select-Object -First 15 | ForEach-Object { "{0,10:N1} MB  {1}" -f ($_.Length/1MB), $_.FullName }
           "TOTAL vendor: {0:N1} MB" -f ((Get-ChildItem vendor -Recurse -File | Measure-Object Length -Sum).Sum/1MB)
