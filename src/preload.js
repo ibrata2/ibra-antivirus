@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('ibra', {
   browserFolder: () => ipcRenderer.invoke('browser-folder'),
   browserAuto: which => ipcRenderer.invoke('browser-auto', which),
   browserCanAuto: () => ipcRenderer.invoke('browser-can-auto'),
+  extLog: () => ipcRenderer.invoke('ext-log'),
   onExtInstall: cb => { const f = (_, d) => cb(d); ipcRenderer.on('ext-install', f); return () => ipcRenderer.removeListener('ext-install', f); },
   browserLogClear: () => ipcRenderer.invoke('browser-log-clear'),
   win: a => ipcRenderer.send('win', a),

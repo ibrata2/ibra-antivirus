@@ -124,7 +124,10 @@ function createWindow() {
   win.webContents.on('will-navigate', e => e.preventDefault());
 }
 
+let autoCheckScheduled = false;
 function showWindow() {
+  // started hidden at Windows login: check the browser extension the first time the user opens the app
+  if (STARTED_HIDDEN && !autoCheckScheduled) { autoCheckScheduled = true; setTimeout(() => autoExtensionCheck(), 8000); }
   if (!win || win.isDestroyed()) createWindow();
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
@@ -271,14 +274,19 @@ function makeOverlay() {
   return ov;
 }
 
-async function installExtension({ which = 'all', ask = false } = {}) {
+async function installExtension({ which = 'all', ask = false, quiet = false, only = null } = {}) {
   if (extInstalling) return { busy: true };
   if (!browsers.canAutoInstall()) return { ok: false, error: 'helper-missing' };
   const found = browsers.installed();
   const online = onlineBrowserNames();
-  // skip browsers whose extension is already connected
-  const skip = which === 'all' ? found.filter(b => online.includes(browsers.HEARTBEAT_NAME[browsers.PROCESS_OF[b.id]])).map(b => browsers.PROCESS_OF[b.id]) : [];
-  const todo = which === 'all' ? found.filter(b => !skip.includes(browsers.PROCESS_OF[b.id])) : found.filter(b => browsers.PROCESS_OF[b.id] === which);
+  const proc = b => browsers.PROCESS_OF[b.id];
+  let skip, todo;
+  if (only) { todo = found.filter(b => only.includes(proc(b))); skip = [...new Set(found.filter(b => !only.includes(proc(b))).map(proc))]; which = 'all'; }
+  else if (which === 'all') {
+    // skip browsers whose extension is already connected
+    skip = found.filter(b => online.includes(browsers.HEARTBEAT_NAME[proc(b)])).map(proc);
+    todo = found.filter(b => !skip.includes(proc(b)));
+  } else { skip = []; todo = found.filter(b => proc(b) === which); }
   if (!todo.length) return { ok: true, nothing: true };
   if (ask) {
     const r = await dialog.showMessageBox(win && win.isVisible() ? win : undefined, {
@@ -297,7 +305,11 @@ async function installExtension({ which = 'all', ask = false } = {}) {
   const send = d => { if (!ov.isDestroyed()) ov.webContents.executeJavaScript(`update(${JSON.stringify(d)})`).catch(() => {}); };
   ov.webContents.once('did-finish-load', () => send({ lang }));
   const started = Date.now();
-  const res = await browsers.autoInstall({ which, skip, lang }, ev => {
+  const logFile = P.data('ext-install.log');
+  const log = line => { try { fs.appendFileSync(logFile, new Date().toISOString() + ' ' + line + '\n'); } catch {} };
+  log(`--- install which=${which} skip=${skip.join(',')} todo=${todo.map(b => b.name).join(',')} online=${online.join(',')}`);
+  const res = await browsers.autoInstall({ which, skip, lang, onLog: log }, ev => {
+    log(JSON.stringify(ev));
     if (ev.start) send({ lang, browser: ev.start });
     else if (ev.step) send({ step: ev.step });
     else if (ev.result) send({ result: ev.message, cls: ev.ok ? 'ok' : 'bad' });
@@ -318,13 +330,19 @@ async function installExtension({ which = 'all', ask = false } = {}) {
       if (!confirmed && bridge.status().some(b => b.lastSeen >= started)) confirmed = true;
     }
     lines.push((r.ok ? '✓ ' : '✗ ') + r.result + ': ' + (r.ok ? (confirmed ? t().extConfirmed : t().extLoaded) : r.message));
+    log(`result ${r.result} ok=${r.ok} confirmed=${confirmed} ${r.message || ''}`);
+    const st = store.get('extState') || {};
+    const cur = st[r.process] || { tries: 0, ok: false };
+    st[r.process] = { tries: cur.tries + 1, ok: !!(r.ok && confirmed), at: Date.now() };
+    store.set('extState', st);
   }
+  if (!res.results || !res.results.length) log('no results: ' + JSON.stringify({ ok: res.ok, error: res.error, none: res.none }));
   if (!ov.isDestroyed()) ov.close();
   if (wasVisible && win && !win.isDestroyed()) { win.restore(); win.focus(); }
   extInstalling = false;
   store.set('extAutoDone', true);
   const ok = (res.results || []).length > 0 && res.results.every(r => r.ok);
-  if (!res.cancelled && lines.length) {
+  if (!res.cancelled && lines.length && !quiet) {
     await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
       type: ok ? 'info' : 'warning', title: 'IBRA ANTIVIRUS', icon: P.asset(ok ? 'shield-green.png' : 'shield-orange.png'),
       message: ok ? t().extDoneTitle : t().extFailTitle, detail: lines.join('\n') + (ok ? '' : '\n\n' + t().extFailHint), buttons: ['OK'], noLink: true
@@ -333,6 +351,18 @@ async function installExtension({ which = 'all', ask = false } = {}) {
   push('ext-install', { status: 'done', res });
   refresh();
   return { ...res, lines };
+}
+
+async function autoExtensionCheck() {
+  if (extInstalling || (scanner && scanner.running) || !browsers.canAutoInstall()) return;
+  const st = store.get('extState') || {};
+  const online = onlineBrowserNames();
+  const todo = [...new Set(browsers.installed()
+    .map(b => browsers.PROCESS_OF[b.id])
+    .filter(p => !online.includes(browsers.HEARTBEAT_NAME[p]))
+    .filter(p => !(st[p] && st[p].ok) && !((st[p] && st[p].tries) >= 3)))];
+  if (!todo.length) return;
+  await installExtension({ only: todo, ask: false });
 }
 
 // ---------------------------------------------------------------- IPC
@@ -399,6 +429,7 @@ function ipc() {
   });
   ipcMain.handle('browser-auto', (_, which) => installExtension({ which: which || 'all', ask: false }));
   ipcMain.handle('browser-can-auto', () => browsers.canAutoInstall());
+  ipcMain.handle('ext-log', () => { const f = P.data('ext-install.log'); if (fs.existsSync(f)) shell.showItemInFolder(f); return fs.existsSync(f); });
   ipcMain.handle('browser-folder', () => { try { const d = browsers.prepareExtension(); shell.openPath(d); return d; } catch { return null; } });
   ipcMain.handle('browser-log-clear', () => { store.set('browserLog', []); refresh(); return true; });
   ipcMain.on('win', (_, a) => {
@@ -420,7 +451,18 @@ function checkAppUpdate(manual) {
       updater.on('update-available', i => push('app-update', { status: 'available', version: i.version }));
       updater.on('update-not-available', () => push('app-update', { status: 'latest' }));
       updater.on('download-progress', p => push('app-update', { status: 'downloading', percent: Math.round(p.percent) }));
-      updater.on('update-downloaded', i => push('app-update', { status: 'ready', version: i.version }));
+      updater.autoInstallOnAppQuit = true;
+      updater.on('update-downloaded', i => {
+        push('app-update', { status: 'ready', version: i.version });
+        notify('IBRA ANTIVIRUS', (store.get('lang') === 'en' ? `Updating to version ${i.version}...` : `جاري التحديث للنسخة ${i.version}...`));
+        // the app lives in the tray and is rarely closed, so install the update by itself when nothing is running
+        const tryInstall = () => {
+          if ((scanner && scanner.running) || extInstalling) return setTimeout(tryInstall, 60000);
+          quitting = true;
+          updater.quitAndInstall(true, true);   // silent, start again after updating
+        };
+        setTimeout(tryInstall, 20000);
+      });
       updater.on('error', e => push('app-update', { status: 'error', error: String(e.message || e).slice(0, 200) }));
     }
     return updater.checkForUpdates().then(() => ({ ok: true })).catch(e => ({ ok: false, error: e.message }));
@@ -504,13 +546,16 @@ app.whenReady().then(() => {
   const target = argScanTarget(process.argv);
   if (target) setTimeout(() => startScan({ type: 'custom', targets: [target] }), 1200);
 
-  // first launch after setup: install the browser extension automatically (asks once)
-  if (!store.get('extAutoDone') && !STARTED_HIDDEN && !target) {
-    setTimeout(() => {
-      if (onlineBrowserNames().length && browsers.installed().length <= onlineBrowserNames().length) { store.set('extAutoDone', true); return; }
-      installExtension({ which: 'all', ask: true }).then(r => { if (r && r.later) store.set('extAutoDone', true); });
-    }, 7000);
+  if (process.argv.includes('--test-ext-install')) {
+    setTimeout(async () => {
+      const r = await installExtension({ which: 'all', ask: false, quiet: true });
+      fs.writeFileSync(P.data('ext-test-result.json'), JSON.stringify({ r, bridge: bridge.status() }, null, 2));
+      quitting = true; app.exit(0);
+    }, 3000);
   }
+  // install the browser extension automatically on every browser that does not have it yet
+  // (same method as IBRA Download Manager). Each browser is tried at most 3 times; done once it connects.
+  if (!STARTED_HIDDEN && !target && !process.argv.includes('--test-ext-install')) setTimeout(autoExtensionCheck, 12000);
 });
 
 app.on('before-quit', () => { quitting = true; });

@@ -61,7 +61,7 @@ function canAutoInstall() { return process.platform === 'win32' && P.exists(help
  * opens the extensions page, turns on developer mode, presses "Load unpacked" and picks the folder.
  * onEvent receives every JSON line from the helper ({start}|{step}|{result}|{done}).
  */
-function autoInstall({ which = 'all', skip = [], lang = 'ar' }, onEvent = () => {}) {
+function autoInstall({ which = 'all', skip = [], lang = 'ar', onLog = () => {} }, onEvent = () => {}) {
   return new Promise(resolve => {
     if (!canAutoInstall()) return resolve({ ok: false, error: 'helper-missing' });
     let dir;
@@ -84,8 +84,9 @@ function autoInstall({ which = 'all', skip = [], lang = 'ar' }, onEvent = () => 
         onEvent(ev);
       }
     });
-    p.stderr.on('data', () => {});
+    p.stderr.on('data', d => onLog('[helper] ' + d.toString('utf8').trim()));
     p.on('error', e => resolve({ ok: false, error: e.message }));
+    p.on('close', code => onLog('[helper] exit ' + code));
     p.on('close', () => resolve({ ok: !!(final && final.ok), none: !!(final && final.none), cancelled: !!(final && final.cancelled), results, dir }));
   });
 }

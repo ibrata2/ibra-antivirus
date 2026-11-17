@@ -384,6 +384,7 @@ async function renderBrowser() {
 }
 $('#brOpenDir').onclick = () => api.browserFolder();
 $('#brAutoAll').onclick = async () => { const b = $('#brAutoAll'); b.disabled = true; await api.browserAuto('all'); b.disabled = false; S = await api.state(); renderBrowser(); };
+$('#brLogBtn').onclick = async () => { if (!(await api.extLog())) toast(L.brNoLog); };
 $('#brManual').onclick = async () => { const d = await api.browserFolder(); if (d) { $('#brSteps').hidden = false; $('#brDir').textContent = d; } };
 api.onExtInstall(e => { if (e.status === 'done' && $('#page-browser').classList.contains('active')) setTimeout(renderBrowser, 500); });
 $('#brLogClear').onclick = async () => { await api.browserLogClear(); S = await api.state(); renderBrowser(); };
