@@ -35,15 +35,20 @@ jobs:
               console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (blocked ? `   [${q.get('r')} ${q.get('k') || ''} ${q.get('w') || ''}]` : ''));
               if (u.includes('activationmobile')) await page.screenshot({ path: 'scam.png' });
             }
-            console.log('---- page scanner alone (domain name check bypassed)');
-            const s = await sw.evaluate(async () => { await chrome.storage.session.set({ allowed: [] }); return true; });
-            await sw.evaluate(() => { self.lureDomain = () => null; });
-            try { await page.goto('https://activationmobile.top/?pc24-pc', { timeout: 25000, waitUntil: 'domcontentloaded' }); } catch (e) {}
-            await new Promise(r => setTimeout(r, 9000));
-            console.log('URL now: ' + page.url());
-            try { console.log('TEXT: ' + (await page.evaluate(() => document.body ? document.body.innerText : '')).replace(/\s+/g, ' ').slice(0, 900)); } catch (e) { console.log('TEXT ERR ' + e.message); }
-            console.log('LURE now: ' + JSON.stringify(await sw.evaluate(() => typeof lureDomain === 'function' ? String(lureDomain('activationmobile.top')) : 'n/a')));
-            const now = page.url(); console.log((now.includes('warning.html') ? 'BLOCKED ' : 'open    ') + 'activationmobile.top  -> ' + (now.includes('warning.html') ? new URL(now).searchParams.get('r') + ' ' + new URL(now).searchParams.get('k') : ''));
+            console.log('---- page scanner on a copy of the scam page (normal-looking domain, text drawn by script after 2 s)');
+            const http = require('http');
+            const scam = `<html><body style="background:#222;color:#fff"><div id=app></div><script>setTimeout(()=>{document.getElementById('app').innerHTML=\`<h3>PC24.Top Download For Windows</h3><p>To start Download , please install 2 applications and run them for 30 seconds</p><p>Or complete 2 surveys.</p><p>Note: If you click on an offer and it does not open, simply choose another offer.</p><p>You must enter correct information (such as your email address, phone number, etc.).</p><button>!انقر للحصول على مكافأتك</button><button>Install and Open WPS Office!</button><button>!أدخل رقم هاتفك وقم بتنزيل المحتوى الخاص بك</button><p>After you install 2 applications or complete 2 surveys, your download will start automatically.</p>\`},2000)</script></body></html>`;
+            const tech = `<html><body><h1>WARNING! Your computer has been infected!</h1><p>5 viruses detected! Call Microsoft Support now: +1 (888) 555-1234 toll free</p></body></html>`;
+            const shop = `<html><body><h1>My Shop</h1><p>Download our mobile app. Enter your phone number at checkout to get delivery updates. Complete the form below to contact us. Your download will start automatically.</p></body></html>`;
+            http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(req.url.startsWith('/tech') ? tech : req.url.startsWith('/shop') ? shop : scam); }).listen(8765);
+            for (const u of ['http://pc-games-center.localtest.me:8765/download', 'http://pc-games-center.localtest.me:8765/tech', 'http://pc-games-center.localtest.me:8765/shop']) {
+              try { await page.goto(u, { timeout: 15000 }); } catch (e) {}
+              await new Promise(r => setTimeout(r, 6000));
+              const now = page.url(); const q = now.includes('warning.html') ? new URL(now).searchParams : null;
+              console.log((q ? 'BLOCKED ' : 'open    ') + u + (q ? `   [${q.get('r')} ${q.get('k')}]` : ''));
+              if (u.endsWith('/download')) await page.screenshot({ path: 'scam-warning.png' });
+            }
+            process.exit(0);
             await ctx.close();
           })();
           '@ | Set-Content e2e/run.js
