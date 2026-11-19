@@ -40,6 +40,9 @@ jobs:
             await sw.evaluate(() => { self.lureDomain = () => null; });
             try { await page.goto('https://activationmobile.top/?pc24-pc', { timeout: 25000, waitUntil: 'domcontentloaded' }); } catch (e) {}
             await new Promise(r => setTimeout(r, 9000));
+            console.log('URL now: ' + page.url());
+            try { console.log('TEXT: ' + (await page.evaluate(() => document.body ? document.body.innerText : '')).replace(/\s+/g, ' ').slice(0, 900)); } catch (e) { console.log('TEXT ERR ' + e.message); }
+            console.log('LURE now: ' + JSON.stringify(await sw.evaluate(() => typeof lureDomain === 'function' ? String(lureDomain('activationmobile.top')) : 'n/a')));
             const now = page.url(); console.log((now.includes('warning.html') ? 'BLOCKED ' : 'open    ') + 'activationmobile.top  -> ' + (now.includes('warning.html') ? new URL(now).searchParams.get('r') + ' ' + new URL(now).searchParams.get('k') : ''));
             await ctx.close();
           })();
