@@ -43,9 +43,78 @@
         <div class="tip">${label}${detail ? `<small>${detail}</small>` : ''}</div></div>`;
     const frame = root.querySelector('.frame');
     const tab = root.querySelector('.tab');
+    window.__ibraWarn = text => {
+      const c = COLORS.warn;
+      frame.style.borderColor = c; tab.style.borderColor = c;
+      root.querySelector('.tab img').src = chrome.runtime.getURL('icons/orange-32.png');
+      root.querySelector('.tip').innerHTML = '';
+      root.querySelector('.tip').append(L.warn, Object.assign(document.createElement('small'), { textContent: text }));
+    };
     root.querySelector('.x').addEventListener('click', e => { e.stopPropagation(); frame.classList.add('hidden'); tab.classList.add('hidden'); });
     // never cover fullscreen videos
     document.addEventListener('fullscreenchange', () => { host.style.display = document.fullscreenElement ? 'none' : ''; });
     (document.body || document.documentElement).appendChild(host);
   });
+})();
+
+// ---------------------------------------------------------------------------------------------
+// IBRA ANTIVIRUS — scam page detection: reads what the page shows (after scripts draw it) and
+// recognises content lockers, fake "complete surveys / install apps to download" walls,
+// fake virus / tech-support alerts, fake prizes and "click Allow" notification traps.
+(() => {
+  if (window.top !== window) return;
+  const RULES = [
+    // content lockers / offer walls
+    ['locker', 3, /complete\s+(\d+|one|two|three|a\s+few)\s+(short\s+|quick\s+|simple\s+)?(surveys?|offers?|tasks?)/i],
+    ['locker', 3, /install\s+(\d+|two|three|one)\s+(free\s+)?(apps?|applications?|games?)/i],
+    ['locker', 2, /(run|open|play)\s+(them|it|the\s+apps?)\s+for\s+\d+\s+(seconds|minutes)/i],
+    ['locker', 2, /(click|choose|select)\s+(on\s+)?(an?|another|any)\s+offer/i],
+    ['locker', 1, /download\s+will\s+(start|begin|unlock)\s+automatically/i],
+    ['locker', 1, /enter\s+(correct|valid|real)\s+(information|details|info)/i],
+    ['locker', 2, /(content|file|download)\s+(is\s+)?locked|unlock\s+(the\s+)?(content|download|file)/i],
+    ['locker', 2, /(human|bot)\s+verification|verify\s+(that\s+)?you(\s+a|')re\s+(a\s+)?human/i],
+    ['locker', 3, /أكمل\s*(\d+|اثنين|ثلاث)?\s*(استبيان|استبيانات|استطلاع|عروض|عرض)/],
+    ['locker', 2, /أدخل\s+رقم\s+(هاتفك|الهاتف|جوالك|التعريف)/],
+    ['locker', 2, /(انقر|اضغط)\s+للحصول\s+على\s+(مكافأ|جائز|هدي)/],
+    ['locker', 2, /(enter|submit)\s+your\s+(phone|mobile|cell)\s+(number)?\s*(to|and)\s+(download|unlock|get|receive|continue|win)/i],
+    // fake virus / tech support
+    ['support', 3, /(your\s+)?(computer|pc|windows|device|phone|iphone|android|system)\s+(is|has\s+been|may\s+be|was)\s+(infected|locked|blocked|compromised|hacked|damaged)/i],
+    ['support', 3, /call\s+(now\s+)?(microsoft|windows|apple|technical|tech|customer)?\s*support|call\s+(this\s+)?toll[\s-]?free/i],
+    ['support', 2, /(\d+)\s+viruses?\s+(detected|found)|virus(es)?\s+(alert|detected)\s*!/i],
+    ['support', 1, /(\+?1[\s-]?)?\(?8\d\d\)?[\s-]\d{3}[\s-]\d{4}/],
+    ['support', 3, /جهازك\s+(مصاب|مخترق|مقفل)|تم\s+(اختراق|قفل)\s+جهازك/],
+    // fake prizes
+    ['prize', 3, /congratulations?!?.{0,100}(you('ve|\s+have)?\s+(won|been\s+(selected|chosen))|winner)/is],
+    ['prize', 2, /claim\s+your\s+(free\s+)?(prize|reward|gift|iphone|samsung)/i],
+    ['prize', 2, /مبروك.{0,60}(ربحت|فزت|تم\s+اختيارك)/s],
+    // "click Allow" notification traps
+    ['allow', 5, /(click|press|tap)\s+["“']?allow["”']?\s+(to|if)\s+(continue|verify|watch|confirm|prove|download|play|access|you)/i],
+    ['allow', 5, /(اضغط|انقر)\s+(على\s+)?["“']?(سماح|السماح)["”']?\s+(للمتابعة|للتحقق|لمشاهدة|للتحميل)/]
+  ];
+  let done = false, warned = false, checks = 0;
+  function scan() {
+    if (done || !document.body) return;
+    checks++;
+    const text = (document.body.innerText || '').slice(0, 40000);
+    const score = {}; const hits = [];
+    for (const [kind, w, re] of RULES) if (re.test(text)) { score[kind] = (score[kind] || 0) + w; hits.push(kind); }
+    const [kind, best] = Object.entries(score).sort((a, b) => b[1] - a[1])[0] || [null, 0];
+    // scam walls are short pages; long articles that merely talk about scams need much more evidence
+    const need = text.length > 6000 ? 9 : 5;
+    if (best >= need) {
+      done = true;
+      chrome.runtime.sendMessage({ type: 'page-scam', url: location.href, kind, score: best });
+    } else if (best >= 3 && !warned) {
+      warned = true;
+      chrome.runtime.sendMessage({ type: 'page-suspicious', kind }, r => { if (r && r.text && window.__ibraWarn) window.__ibraWarn(r.text); });
+    }
+  }
+  let t = null;
+  const obs = new MutationObserver(() => { clearTimeout(t); t = setTimeout(scan, 600); });
+  const start = () => {
+    scan();
+    if (!done && document.body) obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+    setTimeout(() => obs.disconnect(), 25000);   // pages usually draw their scam text within seconds
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

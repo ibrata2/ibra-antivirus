@@ -3,15 +3,45 @@ on:
   push:
     branches: [ test-ext ]
 jobs:
-  dns:
+  e2e:
     runs-on: windows-latest
     steps:
-      - name: Verdicts for activationmobile.top
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install Playwright Chromium
+        run: |
+          mkdir e2e; cd e2e; npm init -y > $null; npm i playwright@1.49.1 --no-audit --no-fund; npx playwright install chromium
+      - name: Open sites with the extension loaded
         shell: pwsh
         run: |
-          foreach ($d in 'activationmobile.top','pc24.top') {
-            foreach ($r in 'https://security.cloudflare-dns.com/dns-query','https://dns.adguard-dns.com/resolve','https://cloudflare-dns.com/dns-query') {
-              try { $x = Invoke-RestMethod -Uri "$r`?name=$d&type=A" -Headers @{accept='application/dns-json'} -TimeoutSec 10; "$d $r -> $($x.Status) $(($x.Answer|?{$_.type -eq 1}|select -First 1).data)" } catch { "$d $r ERR" } } }
-          foreach ($u in 'https://openphish.com/feed.txt','https://phishing.army/download/phishing_army_blocklist.txt','https://urlhaus.abuse.ch/downloads/hostfile/','https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt','https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/fake-onlydomains.txt') {
-            try { $c = (Invoke-WebRequest $u -UseBasicParsing).Content; "$u -> $([bool]($c -match 'activationmobile'))" } catch { "$u ERR" } }
-          try { $p = Invoke-WebRequest 'https://activationmobile.top/?pc24-pc' -UseBasicParsing -TimeoutSec 20; "PAGE status $($p.StatusCode) len $($p.Content.Length)"; ($p.Content -replace '\s+',' ').Substring(0, [Math]::Min(3000, $p.Content.Length)) } catch { "PAGE ERR $_" }
+          @'
+          const { chromium } = require('playwright');
+          const path = require('path');
+          (async () => {
+            const ext = path.resolve('..', 'browser-extension');
+            const ctx = await chromium.launchPersistentContext(path.resolve('prof'), { headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
+            let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
+            await new Promise(r => setTimeout(r, 2500));
+            // content-only test first: allow the domain name check to pass so the page scanner is what decides
+            const page = await ctx.newPage();
+            const urls = ['https://activationmobile.top/?pc24-pc', 'https://verificationuser.org/', 'https://www.wps.com/download/', 'https://www.ftc.gov/business-guidance/small-businesses/cybersecurity/tech-support-scams',
+              'https://en.wikipedia.org/wiki/Survey_methodology', 'https://www.speedtest.net/', 'https://www.aljazeera.net/', 'https://www.mediafire.com/', 'https://www.google.com/', 'https://shabakaty.com/', 'https://www.amazon.com/'];
+            for (const u of urls) {
+              try { await page.goto(u, { timeout: 25000, waitUntil: 'domcontentloaded' }); } catch (e) {}
+              await new Promise(r => setTimeout(r, 7000));
+              const now = page.url(); const blocked = now.includes('warning.html');
+              const q = blocked ? new URL(now).searchParams : null;
+              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (blocked ? `   [${q.get('r')} ${q.get('k') || ''} ${q.get('w') || ''}]` : ''));
+              if (u.includes('activationmobile')) await page.screenshot({ path: 'scam.png' });
+            }
+            console.log('---- page scanner alone (domain name check bypassed)');
+            const s = await sw.evaluate(async () => { await chrome.storage.session.set({ allowed: [] }); return true; });
+            await sw.evaluate(() => { self.lureDomain = () => null; });
+            try { await page.goto('https://activationmobile.top/?pc24-pc', { timeout: 25000, waitUntil: 'domcontentloaded' }); } catch (e) {}
+            await new Promise(r => setTimeout(r, 9000));
+            const now = page.url(); console.log((now.includes('warning.html') ? 'BLOCKED ' : 'open    ') + 'activationmobile.top  -> ' + (now.includes('warning.html') ? new URL(now).searchParams.get('r') + ' ' + new URL(now).searchParams.get('k') : ''));
+            await ctx.close();
+          })();
+          '@ | Set-Content e2e/run.js
+          cd e2e; node run.js
