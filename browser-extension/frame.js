@@ -3,9 +3,9 @@
   if (window.top !== window || document.getElementById('ibra-av-frame-host')) return;
   const TXT = {
     ar: { safe: 'محمي بواسطة IBRA ANTIVIRUS', warn: 'انتبه: هذا الموقع مشكوك', http: 'انتبه: الاتصال غير مشفّر (http)', off: 'حماية المتصفح طافية', hide: 'إخفاء الإطار بهذه الصفحة',
-          reasons: { brand: 'يحمل اسم شركة مو اسمه الحقيقي', homograph: 'حروف تقلّد موقع معروف', punycode: 'اسم الموقع بحروف مموهة', 'ip-login': 'صفحة دخول على عنوان IP', userinfo: 'رابط مخادع', 'deep-subdomain': 'عنوان طويل يخفي الموقع الحقيقي', http: 'الاتصال غير مشفّر' } },
+          reasons: { brand: 'يحمل اسم شركة مو اسمه الحقيقي', homograph: 'حروف تقلّد موقع معروف', punycode: 'اسم الموقع بحروف مموهة', 'ip-login': 'صفحة دخول على عنوان IP', userinfo: 'رابط مخادع', 'deep-subdomain': 'عنوان طويل يخفي الموقع الحقيقي', http: 'الاتصال غير مشفّر', lure: 'اسمه من كلمات مواقع الاحتيال', cloud: 'مسجّل كخطر بالحماية السحابية', 'cloud-suspicious': 'مشكوك بالحماية السحابية' } },
     en: { safe: 'Protected by IBRA ANTIVIRUS', warn: 'Careful: this site looks suspicious', http: 'Careful: connection is not encrypted (http)', off: 'Browser protection is off', hide: 'Hide frame on this page',
-          reasons: { brand: 'uses a brand name that is not its own', homograph: 'letters imitate a known site', punycode: 'disguised characters in the address', 'ip-login': 'login page on a raw IP address', userinfo: 'deceptive link', 'deep-subdomain': 'long address hiding the real site', http: 'connection is not encrypted' } }
+          reasons: { brand: 'uses a brand name that is not its own', homograph: 'letters imitate a known site', punycode: 'disguised characters in the address', 'ip-login': 'login page on a raw IP address', userinfo: 'deceptive link', 'deep-subdomain': 'long address hiding the real site', http: 'connection is not encrypted', lure: 'name made of scam words', cloud: 'listed as dangerous by cloud protection', 'cloud-suspicious': 'suspicious in cloud protection' } }
   };
   const COLORS = { safe: '#12a150', warn: '#f07a12', off: '#9aa6a0' };
 

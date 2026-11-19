@@ -497,6 +497,7 @@ app.whenReady().then(() => {
   // browser extension bridge
   bridge = new Bridge({
     lang: () => store.get('lang'),
+    extVersion: () => { try { return JSON.parse(fs.readFileSync(P.data('browser-extension', 'manifest.json'), 'utf8')).version; } catch { return null; } },
     scan: async (file, url) => {
       const th = await scanner.checkFile(file, {}, { clam: true });
       if (th) { th.source = 'browser'; th.url = url; handleThreat(th, 'browser'); return { name: th.name, severity: th.severity }; }
