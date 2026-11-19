@@ -3,34 +3,43 @@ on:
   push:
     branches: [ test-ext ]
 jobs:
-  dns:
+  e2e:
     runs-on: windows-latest
     steps:
-      - name: Protective DNS verdicts
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install Playwright Chromium
+        run: |
+          mkdir e2e; cd e2e; npm init -y > $null; npm i playwright@1.49.1 --no-audit --no-fund; npx playwright install chromium
+      - name: Open sites with the extension loaded
         shell: pwsh
         run: |
-          $feed = (Invoke-WebRequest https://openphish.com/feed.txt -UseBasicParsing).Content -split "`n" | Where-Object { $_ } | Select-Object -First 400
-          $known = $feed | ForEach-Object { ([uri]$_).Host } | Sort-Object -Unique | Select-Object -First 25
-          $domains = @('verificationuser.org','google.com','github.com','bbc.co.uk','ibraprogram.netlify.app','zaincash.iq','asiacell.com','facebook.com') + $known
-          $resolvers = [ordered]@{
-            'cf-plain'   = 'https://cloudflare-dns.com/dns-query'
-            'cf-sec'     = 'https://security.cloudflare-dns.com/dns-query'
-            'quad9'      = 'https://dns.quad9.net:5053/dns-query'
-            'adguard'    = 'https://dns.adguard-dns.com/resolve'
-            'cleanbrows' = 'https://doh.cleanbrowsing.org/doh/security-filter/'
-          }
-          foreach ($d in $domains) {
-            $row = "{0,-45}" -f $d
-            foreach ($k in $resolvers.Keys) {
-              try {
-                $r = Invoke-RestMethod -Uri ($resolvers[$k] + "?name=$d&type=A") -Headers @{ accept = 'application/dns-json' } -TimeoutSec 10
-                $ans = ($r.Answer | Where-Object { $_.type -eq 1 } | Select-Object -First 1).data
-                $row += " | $k=$($r.Status):$ans"
-              } catch { $row += " | $k=ERR" }
+          $feed = (Invoke-WebRequest https://openphish.com/feed.txt -UseBasicParsing).Content -split "`n" | Where-Object { $_ -match '^https?://' } | Select-Object -First 300
+          $hosts = $feed | ForEach-Object { ([uri]$_).Host } | Where-Object { $_ -notmatch 'pages\.dev|workers\.dev|github\.io' } | Sort-Object -Unique | Select-Object -First 6
+          $env:PHISH = ($hosts | ForEach-Object { "https://$_/" }) -join ','
+          @'
+          const { chromium } = require('playwright');
+          const path = require('path');
+          (async () => {
+            const ext = path.resolve('..', 'browser-extension');
+            const ctx = await chromium.launchPersistentContext(path.resolve('prof'), { headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
+            let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
+            await new Promise(r => setTimeout(r, 2500));
+            const urls = ['https://verificationuser.org/', ...process.env.PHISH.split(',').filter(Boolean), 'https://www.google.com/', 'https://www.bbc.co.uk/', 'https://github.com/', 'https://www.asiacell.com/', 'https://ibraprogram.netlify.app/'];
+            const page = await ctx.newPage();
+            for (const u of urls) {
+              try { await page.goto(u, { timeout: 20000, waitUntil: 'domcontentloaded' }); } catch (e) {}
+              await new Promise(r => setTimeout(r, 3500));
+              const now = page.url();
+              const blocked = now.startsWith('chrome-extension://') && now.includes('warning.html');
+              const reason = blocked ? (new URL(now).searchParams.get('r') + ' ' + (new URL(now).searchParams.get('w') || '')) : '';
+              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (reason ? '   [' + reason.trim() + ']' : ''));
             }
-            $row
-          }
-          "---- in feeds?"
-          foreach ($u in 'https://phishing.army/download/phishing_army_blocklist.txt','https://urlhaus.abuse.ch/downloads/hostfile/','https://openphish.com/feed.txt') {
-            try { $c = (Invoke-WebRequest $u -UseBasicParsing).Content; "$u -> $([bool]($c -match 'verificationuser'))" } catch { "$u ERR" }
-          }
+            await page.goto('https://verificationuser.org/').catch(() => {});
+            await new Promise(r => setTimeout(r, 3000));
+            await page.screenshot({ path: 'warning.png' });
+            await ctx.close();
+          })();
+          '@ | Set-Content e2e/run.js
+          cd e2e; node run.js

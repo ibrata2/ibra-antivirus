@@ -38,7 +38,7 @@ class Bridge extends EventEmitter {
           const name = String(data.browser || 'Browser').slice(0, 20);
           this.browsers[name] = { lastSeen: Date.now(), version: data.version, stats: data.stats || {}, listCount: data.listCount || 0 };
           this.emit('change');
-          return this.send(res, 200, { ok: true, lang: this.h.lang() });
+          return this.send(res, 200, { ok: true, lang: this.h.lang(), extVersion: this.h.extVersion ? this.h.extVersion() : null });
         }
         if (req.url === '/event') {
           this.emit('event', { type: String(data.type || ''), url: String(data.url || '').slice(0, 2000), reason: String(data.reason || '') });

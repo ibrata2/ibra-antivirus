@@ -46,7 +46,7 @@ const T = {
 const get = keys => chrome.storage.local.get(keys);
 const set = obj => chrome.storage.local.set(obj);
 async function settings() {
-  const s = await chrome.storage.sync.get({ enabled: true, frame: true, phishingHeuristics: true, scanDownloads: true, lang: null });
+  const s = await chrome.storage.sync.get({ enabled: true, frame: true, phishingHeuristics: true, cloud: true, scanDownloads: true, lang: null });
   if (!s.lang) s.lang = (chrome.i18n.getUILanguage() || 'ar').startsWith('ar') ? 'ar' : 'en';
   return s;
 }
@@ -66,6 +66,80 @@ function skeleton(s) {
 }
 
 /** Heuristic phishing check. Returns null or { level:'high'|'medium', reason, brand } */
+// Domain names built only from phishing words, e.g. "verificationuser.org", "secure-login-update.com"
+const LURE_STRONG = ['verification', 'verifications', 'verified', 'verify', 'login', 'logins', 'signin', 'signon', 'logon', 'authentication', 'authenticate', 'auth',
+  'recovery', 'recover', 'unlock', 'unlocked', 'suspend', 'suspended', 'suspension', 'confirm', 'confirmation', 'validate', 'validation', 'reactivate', 'reactivation',
+  'restore', 'secure', 'security', 'wallet', 'claim', 'claims', 'reward', 'rewards', 'airdrop', 'refund', 'refunds', 'billing', 'payment', 'payments', 'password',
+  'passwords', 'credential', 'credentials', 'appeal', 'appeals', 'checkpoint', 'unblock', 'locked', 'blocked', 'disabled', 'violation', 'copyright', 'giveaway', 'prize'];
+const LURE_GENERIC = ['user', 'users', 'account', 'accounts', 'acc', 'acct', 'my', 'online', 'web', 'id', 'center', 'centre', 'support', 'help', 'service', 'services',
+  'portal', 'info', 'team', 'official', 'app', 'apps', 'mail', 'page', 'pages', 'site', 'now', 'access', 'client', 'clients', 'customer', 'customers', 'member',
+  'members', 'profile', 'safe', 'check', 'form', 'case', 'review', 'policy', 'update', 'updates', 'alert', 'alerts', 'notice', 'notification', 'notifications',
+  'center', 'desk', 'online', 'verify', 'secure', 'new', 'live', 'net', 'pay', 'free', 'gift', 'bonus', 'auth', 'sso', 'two', 'factor', '2fa', 'mfa', 'otp', 'code', 'codes',
+  'confirm', 'process', 'request', 'requests', 'status', 'session', 'hub', 'zone', 'ticket', 'tickets', 'unusual', 'activity', 'limited', 'limit', 'urgent', 'quick'];
+const LURE_SET = new Set([...LURE_STRONG, ...LURE_GENERIC]);
+const STRONG_SET = new Set(LURE_STRONG);
+const IDENTITY = new Set(['user', 'users', 'account', 'accounts', 'acc', 'acct', 'my', 'id', 'profile', 'member', 'members', 'client', 'clients', 'customer', 'customers',
+  'session', '2fa', 'mfa', 'otp', 'code', 'codes', 'sso']);
+/** Splits "verificationuser" -> ["verification","user"] when the whole label is made of lure words. */
+function lureWords(label) {
+  const s = label.toLowerCase().replace(/[-_.]/g, '').replace(/\d+/g, '');
+  if (s.length < 7 || s.length > 60) return null;
+  const best = new Array(s.length + 1).fill(null); best[0] = [];
+  for (let i = 0; i < s.length; i++) {
+    if (!best[i]) continue;
+    for (let j = i + 2; j <= Math.min(s.length, i + 16); j++) {
+      const w = s.slice(i, j);
+      if (LURE_SET.has(w) && (!best[j] || best[j].length > best[i].length + 1)) best[j] = [...best[i], w];
+    }
+  }
+  return best[s.length];
+}
+function lureDomain(host) {
+  const reg = registrable(host);
+  const label = reg.split('.')[0];
+  const parts = [label];
+  if (PER_USER.test(host) && host !== reg) parts.push(host.slice(0, -(reg.length + 1)).split('.').pop());
+  for (const p of parts) {
+    const w = lureWords(p);
+    if (!w || w.length < 2 || !w.some(x => STRONG_SET.has(x))) continue;
+    // high: two phishing words, a phishing word + an identity word (user, account, id...), or three words or more
+    const strong = w.filter(x => STRONG_SET.has(x)).length;
+    const identity = w.some(x => IDENTITY.has(x));
+    if (strong >= 2 || identity || w.length >= 3) return { level: 'high', reason: 'lure', words: w.join(' + ') };
+    return { level: 'medium', reason: 'lure', words: w.join(' + ') };
+  }
+  return null;
+}
+
+// Cloud reputation: protective DNS resolvers that combine dozens of security vendors' threat feeds.
+// Cloudflare Security answers 0.0.0.0 for malware/phishing; AdGuard answers its block-page IP.
+const CLOUD_TTL = 6 * 3600 * 1000;
+const cloudCache = new Map();
+async function dohA(base, host) {
+  try {
+    const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch(`${base}?name=${encodeURIComponent(host)}&type=A`, { headers: { accept: 'application/dns-json' }, cache: 'no-store', signal: ctl.signal });
+    clearTimeout(tm);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const a = (j.Answer || []).find(x => x.type === 1);
+    return { status: j.Status, ip: a ? a.data : null };
+  } catch { return null; }
+}
+async function cloudCheck(host) {
+  if (!host || isIp(host) || host === 'localhost' || OWN.includes(host)) return null;
+  if (SHARED.has(registrable(host)) && !PER_USER.test(host)) return null;
+  const c = cloudCache.get(host);
+  if (c && Date.now() - c.at < CLOUD_TTL) return c.v;
+  const [cf, ag] = await Promise.all([dohA('https://security.cloudflare-dns.com/dns-query', host), dohA('https://dns.adguard-dns.com/resolve', host)]);
+  let v = null;
+  if (cf && cf.ip === '0.0.0.0') v = { level: 'high', reason: 'cloud' };
+  else if (ag && (ag.ip === '94.140.14.33' || ag.ip === '94.140.14.35' || ag.ip === '0.0.0.0')) v = { level: 'medium', reason: 'cloud-suspicious' };
+  if (cf || ag) cloudCache.set(host, { v, at: Date.now() });
+  if (cloudCache.size > 5000) cloudCache.clear();
+  return v;
+}
+
 function heuristic(url) {
   let u; try { u = new URL(url); } catch { return null; }
   if (!/^https?:$/.test(u.protocol)) return null;
@@ -98,7 +172,10 @@ function heuristic(url) {
   if (isIp(host) && LURE.test(u.pathname + u.search)) return { level: 'high', reason: 'ip-login' };
   // 4. credentials hidden in the URL: https://facebook.com@evil.com
   if (u.username || /@/.test(url.split('?')[0].replace(/^https?:\/\//, '').split('/')[0])) return { level: 'high', reason: 'userinfo' };
-  // 5. very long subdomain chains used to hide the real domain
+  // 5. a domain name made only of phishing words ("verificationuser.org")
+  const lure = lureDomain(host);
+  if (lure) return lure;
+  // 6. very long subdomain chains used to hide the real domain
   if (host.split('.').length >= 6 && LURE.test(host)) return { level: 'medium', reason: 'deep-subdomain' };
   return null;
 }
@@ -208,6 +285,7 @@ async function toApp(path, body) {
     return r.ok ? await r.json() : null;
   } catch { return null; }
 }
+function newer(a, b) { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; }
 async function heartbeat() {
   const s = await get({ stats: {}, listCount: 0 });
   const ua = navigator.userAgent;
@@ -217,18 +295,30 @@ async function heartbeat() {
   const r = await toApp('/heartbeat', { browser, version: chrome.runtime.getManifest().version, stats: s.stats, listCount: s.listCount });
   await chrome.storage.session.set({ appConnected: !!r, appLang: r && r.lang });
   if (r && r.lang) { const cur = await chrome.storage.sync.get({ lang: null }); if (!cur.lang) await chrome.storage.sync.set({ lang: r.lang }); }
+  // the app updated the extension files on disk: load the new version now
+  if (r && r.extVersion && r.extVersion !== chrome.runtime.getManifest().version && newer(r.extVersion, chrome.runtime.getManifest().version)) chrome.runtime.reload();
 }
 
 // ------------------------------------------------------------------ navigation guard (heuristics)
+function warningUrl(v, url) {
+  const r = v.reason === 'brand' || v.reason === 'homograph' || v.reason === 'lure' ? 'phishing' : v.reason === 'cloud' ? 'cloud' : 'suspicious';
+  return chrome.runtime.getURL('warning.html') + `?r=${r}&b=${encodeURIComponent(v.brand || '')}&w=${encodeURIComponent(v.words || '')}#` + url;
+}
 chrome.webNavigation.onBeforeNavigate.addListener(async d => {
   if (d.frameId !== 0 || !/^https?:/.test(d.url)) return;
   const s = await settings();
-  if (!s.enabled || !s.phishingHeuristics) return;
-  const h = heuristic(d.url);
-  if (!h || h.level !== 'high') return;
-  if (await isAllowed(hostOf(d.url))) return;
-  const warn = chrome.runtime.getURL('warning.html') + `?r=${h.reason === 'brand' || h.reason === 'homograph' ? 'phishing' : 'suspicious'}&b=${encodeURIComponent(h.brand || '')}#` + d.url;
-  chrome.tabs.update(d.tabId, { url: warn });
+  if (!s.enabled) return;
+  const host = hostOf(d.url);
+  if (await isAllowed(host)) return;
+  const h = s.phishingHeuristics ? heuristic(d.url) : null;
+  if (h && h.level === 'high') { chrome.tabs.update(d.tabId, { url: warningUrl(h, d.url) }); return; }
+  if (s.cloud === false) return;
+  const c = await cloudCheck(host);
+  if (c && c.level === 'high') {
+    // only redirect if the tab is still on that site
+    try { const tab = await chrome.tabs.get(d.tabId); if (tab && tab.url && hostOf(tab.pendingUrl || tab.url) !== host && hostOf(tab.url) !== host) return; } catch {}
+    chrome.tabs.update(d.tabId, { url: warningUrl(c, d.url) });
+  }
 });
 
 // ------------------------------------------------------------------ downloads → scanned by IBRA ANTIVIRUS app
@@ -252,7 +342,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (msg.type === 'verdict') {
       const s = await settings();
       const url = msg.url || (sender.tab && sender.tab.url) || '';
-      const h = s.phishingHeuristics ? heuristic(url) : null;
+      let h = s.phishingHeuristics ? heuristic(url) : null;
+      if (!h && s.enabled && s.cloud !== false) h = await cloudCheck(hostOf(url));
       const https = url.startsWith('https:');
       let level = 'safe';
       if (!s.enabled) level = 'off';
