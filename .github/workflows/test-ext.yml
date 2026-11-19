@@ -3,51 +3,15 @@ on:
   push:
     branches: [ test-ext ]
 jobs:
-  e2e:
+  dns:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - name: Install Playwright Chromium
-        run: |
-          mkdir e2e; cd e2e; npm init -y > $null; npm i playwright@1.49.1 --no-audit --no-fund; npx playwright install chromium
-      - name: Open sites with the extension loaded
+      - name: Verdicts for activationmobile.top
         shell: pwsh
         run: |
-          $feed = (Invoke-WebRequest https://openphish.com/feed.txt -UseBasicParsing).Content -split "`n" | Where-Object { $_ -match '^https?://' } | Select-Object -First 300
-          $hosts = $feed | ForEach-Object { ([uri]$_).Host } | Where-Object { $_ -notmatch 'pages\.dev|workers\.dev|github\.io' } | Sort-Object -Unique | Select-Object -First 6
-          $env:PHISH = ($hosts | ForEach-Object { "https://$_/" }) -join ','
-          @'
-          const { chromium } = require('playwright');
-          const path = require('path');
-          (async () => {
-            const ext = path.resolve('..', 'browser-extension');
-            const ctx = await chromium.launchPersistentContext(path.resolve('prof'), { headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
-            let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
-            await new Promise(r => setTimeout(r, 2500));
-            const urls = ['https://verificationuser.org/', ...process.env.PHISH.split(',').filter(Boolean), 'https://www.google.com/', 'https://www.bbc.co.uk/', 'https://github.com/', 'https://www.asiacell.com/', 'https://ibraprogram.netlify.app/'];
-            const page = await ctx.newPage();
-            for (const u of urls) {
-              try { await page.goto(u, { timeout: 20000, waitUntil: 'domcontentloaded' }); } catch (e) {}
-              await new Promise(r => setTimeout(r, 3500));
-              const now = page.url();
-              const blocked = now.startsWith('chrome-extension://') && now.includes('warning.html');
-              const reason = blocked ? (new URL(now).searchParams.get('r') + ' ' + (new URL(now).searchParams.get('w') || '')) : '';
-              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (reason ? '   [' + reason.trim() + ']' : ''));
-            }
-            console.log('---- cloud only (block lists removed)');
-            await sw.evaluate(async () => { const r = await chrome.declarativeNetRequest.getDynamicRules(); await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: r.map(x => x.id) }); });
-            for (const u of process.env.PHISH.split(',').filter(Boolean)) {
-              try { await page.goto(u, { timeout: 20000, waitUntil: 'domcontentloaded' }); } catch (e) {}
-              await new Promise(r => setTimeout(r, 3500));
-              const now = page.url(); const blocked = now.includes('warning.html');
-              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (blocked ? '   [' + new URL(now).searchParams.get('r') + ']' : ''));
-            }
-            await page.goto('https://verificationuser.org/').catch(() => {});
-            await new Promise(r => setTimeout(r, 3000));
-            await page.screenshot({ path: 'warning.png' });
-            await ctx.close();
-          })();
-          '@ | Set-Content e2e/run.js
-          cd e2e; node run.js
+          foreach ($d in 'activationmobile.top','pc24.top') {
+            foreach ($r in 'https://security.cloudflare-dns.com/dns-query','https://dns.adguard-dns.com/resolve','https://cloudflare-dns.com/dns-query') {
+              try { $x = Invoke-RestMethod -Uri "$r`?name=$d&type=A" -Headers @{accept='application/dns-json'} -TimeoutSec 10; "$d $r -> $($x.Status) $(($x.Answer|?{$_.type -eq 1}|select -First 1).data)" } catch { "$d $r ERR" } } }
+          foreach ($u in 'https://openphish.com/feed.txt','https://phishing.army/download/phishing_army_blocklist.txt','https://urlhaus.abuse.ch/downloads/hostfile/','https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif-onlydomains.txt','https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/fake-onlydomains.txt') {
+            try { $c = (Invoke-WebRequest $u -UseBasicParsing).Content; "$u -> $([bool]($c -match 'activationmobile'))" } catch { "$u ERR" } }
+          try { $p = Invoke-WebRequest 'https://activationmobile.top/?pc24-pc' -UseBasicParsing -TimeoutSec 20; "PAGE status $($p.StatusCode) len $($p.Content.Length)"; ($p.Content -replace '\s+',' ').Substring(0, [Math]::Min(3000, $p.Content.Length)) } catch { "PAGE ERR $_" }
