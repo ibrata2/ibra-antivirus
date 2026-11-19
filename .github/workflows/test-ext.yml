@@ -1,55 +1,111 @@
-name: Test cloud reputation
+name: E2E install with closed browsers
+
 on:
   push:
     branches: [ test-ext ]
+
+permissions:
+  contents: write
+
 jobs:
-  e2e:
+  windows:
     runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - name: Install Playwright Chromium
-        run: |
-          mkdir e2e; cd e2e; npm init -y > $null; npm i playwright@1.49.1 --no-audit --no-fund; npx playwright install chromium
-      - name: Open sites with the extension loaded
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Bundle ClamAV engine (official Cisco-Talos release)
         shell: pwsh
         run: |
-          @'
-          const { chromium } = require('playwright');
-          const path = require('path');
-          (async () => {
-            const ext = path.resolve('..', 'browser-extension');
-            const ctx = await chromium.launchPersistentContext(path.resolve('prof'), { headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
-            let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
-            await new Promise(r => setTimeout(r, 2500));
-            // content-only test first: allow the domain name check to pass so the page scanner is what decides
-            const page = await ctx.newPage();
-            const urls = ['https://activationmobile.top/?pc24-pc', 'https://verificationuser.org/', 'https://www.wps.com/download/', 'https://www.ftc.gov/business-guidance/small-businesses/cybersecurity/tech-support-scams',
-              'https://en.wikipedia.org/wiki/Survey_methodology', 'https://www.speedtest.net/', 'https://www.aljazeera.net/', 'https://www.mediafire.com/', 'https://www.google.com/', 'https://shabakaty.com/', 'https://www.amazon.com/'];
-            for (const u of urls) {
-              try { await page.goto(u, { timeout: 25000, waitUntil: 'domcontentloaded' }); } catch (e) {}
-              await new Promise(r => setTimeout(r, 7000));
-              const now = page.url(); const blocked = now.includes('warning.html');
-              const q = blocked ? new URL(now).searchParams : null;
-              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (blocked ? `   [${q.get('r')} ${q.get('k') || ''} ${q.get('w') || ''}]` : ''));
-              if (u.includes('activationmobile')) await page.screenshot({ path: 'scam.png' });
-            }
-            console.log('---- page scanner on a copy of the scam page (normal-looking domain, text drawn by script after 2 s)');
-            const http = require('http');
-            const scam = `<html><body style="background:#222;color:#fff"><div id=app></div><script>setTimeout(()=>{document.getElementById('app').innerHTML=\`<h3>PC24.Top Download For Windows</h3><p>To start Download , please install 2 applications and run them for 30 seconds</p><p>Or complete 2 surveys.</p><p>Note: If you click on an offer and it does not open, simply choose another offer.</p><p>You must enter correct information (such as your email address, phone number, etc.).</p><button>!انقر للحصول على مكافأتك</button><button>Install and Open WPS Office!</button><button>!أدخل رقم هاتفك وقم بتنزيل المحتوى الخاص بك</button><p>After you install 2 applications or complete 2 surveys, your download will start automatically.</p>\`},2000)</script></body></html>`;
-            const tech = `<html><body><h1>WARNING! Your computer has been infected!</h1><p>5 viruses detected! Call Microsoft Support now: +1 (888) 555-1234 toll free</p></body></html>`;
-            const shop = `<html><body><h1>My Shop</h1><p>Download our mobile app. Enter your phone number at checkout to get delivery updates. Complete the form below to contact us. Your download will start automatically.</p></body></html>`;
-            http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(req.url.startsWith('/tech') ? tech : req.url.startsWith('/shop') ? shop : scam); }).listen(8765);
-            for (const u of ['http://pc-games-center.localtest.me:8765/download', 'http://pc-games-center.localtest.me:8765/tech', 'http://pc-games-center.localtest.me:8765/shop']) {
-              try { await page.goto(u, { timeout: 15000 }); } catch (e) {}
-              await new Promise(r => setTimeout(r, 6000));
-              const now = page.url(); const q = now.includes('warning.html') ? new URL(now).searchParams : null;
-              console.log((q ? 'BLOCKED ' : 'open    ') + u + (q ? `   [${q.get('r')} ${q.get('k')}]` : ''));
-              if (u.endsWith('/download')) await page.screenshot({ path: 'scam-warning.png' });
-            }
-            process.exit(0);
-            await ctx.close();
-          })();
-          '@ | Set-Content e2e/run.js
-          cd e2e; node run.js
+          New-Item -ItemType Directory -Force vendor/clamav, tmp | Out-Null
+          gh release download -R Cisco-Talos/clamav -p "*win.x64.zip" -D tmp --clobber
+          $zip = Get-ChildItem tmp -Filter "*win.x64.zip" | Select-Object -First 1
+          if (-not $zip) { throw "ClamAV zip not found" }
+          Expand-Archive $zip.FullName -DestinationPath tmp/clamav -Force
+          $scan = Get-ChildItem tmp/clamav -Recurse -Filter clamscan.exe | Select-Object -First 1
+          Copy-Item (Join-Path $scan.DirectoryName '*') vendor/clamav -Recurse -Force
+          & vendor/clamav/clamscan.exe --version
+
+      - name: Bundle YARA engine (official VirusTotal release)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor/yara | Out-Null
+          gh release download -R VirusTotal/yara -p "*win64*.zip" -D tmp --clobber
+          $zip = Get-ChildItem tmp -Filter "*win64*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "YARA zip not found" }
+          Expand-Archive $zip.FullName -DestinationPath tmp/yara -Force
+          $y = Get-ChildItem tmp/yara -Recurse -Filter "yara64.exe" | Select-Object -First 1
+          if (-not $y) { $y = Get-ChildItem tmp/yara -Recurse -Filter "yara.exe" | Select-Object -First 1 }
+          Copy-Item (Join-Path $y.DirectoryName '*') vendor/yara -Recurse -Force
+          Get-ChildItem vendor/yara
+
+      - name: Build browser-extension installer helper (.NET Framework 4.8, built into Windows)
+        shell: pwsh
+        run: |
+          dotnet build tools/ext-installer/ExtInstaller.csproj -c Release -o tmp/extinst
+          if ($LASTEXITCODE -ne 0) { throw "helper build failed" }
+          Copy-Item tmp/extinst/ibra-ext-installer.exe vendor/ -Force
+          if (Test-Path tmp/extinst/ibra-ext-installer.exe.config) { Copy-Item tmp/extinst/ibra-ext-installer.exe.config vendor/ -Force }
+          & vendor/ibra-ext-installer.exe --list
+          "helper exit: $LASTEXITCODE"
+
+      - name: Remove debug files and show bundle size
+        shell: pwsh
+        run: |
+          Get-ChildItem vendor -Recurse -Include *.pdb,*.lib,*.exp,*.ilk -File | Remove-Item -Force
+          # tools we never call (signature authoring / bytecode / rule compiler / manual)
+          Remove-Item vendor/clamav/sigtool.exe, vendor/clamav/clambc.exe, vendor/yara/yarac64.exe, vendor/yara/yarac.exe -Force -ErrorAction SilentlyContinue
+          Remove-Item vendor/clamav/UserManual -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem vendor -Recurse -Directory | Where-Object { $_.Name -in @('include','lib','share','doc','docs','pkgconfig','cmake') } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem vendor -Recurse -File | Sort-Object Length -Descending | Select-Object -First 15 | ForEach-Object { "{0,10:N1} MB  {1}" -f ($_.Length/1MB), $_.FullName }
+          "TOTAL vendor: {0:N1} MB" -f ((Get-ChildItem vendor -Recurse -File | Measure-Object Length -Sum).Sum/1MB)
+
+      - name: Verify YARA rules compile
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem vendor/yara -Filter "yara*.exe" | Where-Object { $_.Name -notlike "yarac*" } | Select-Object -First 1
+          Set-Content tmp/clean.txt "hello"
+          & $exe.FullName -w rules/ibra.yar tmp/clean.txt
+          if ($LASTEXITCODE -ne 0) { throw "YARA rules failed to compile" }
+
+      - name: Build installer and publish release
+        shell: pwsh
+        run: |
+          # Publishes a GitHub Release named after the version in package.json (creates tag vX.Y.Z)
+          npx electron-builder --win --x64 --publish never
+
+      - name: Real-life test - browsers CLOSED, app opens them
+        shell: pwsh
+        run: |
+          Get-Process msedge,chrome -ErrorAction SilentlyContinue | Stop-Process -Force
+          $setup = Get-ChildItem dist -Filter "IBRA-ANTIVIRUS-Setup-*.exe" | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/S' -Wait
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\IBRA ANTIVIRUS\IBRA ANTIVIRUS.exe'
+          for ($i=0; $i -lt 30 -and -not (Test-Path $exe); $i++) { Start-Sleep 2 }
+          Get-Process "IBRA ANTIVIRUS" -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Process msedge,chrome -ErrorAction SilentlyContinue | Stop-Process -Force
+          "browsers running before: $((Get-Process msedge,chrome -ErrorAction SilentlyContinue).Count)"
+          $log = Join-Path $env:APPDATA 'IBRA ANTIVIRUS\ext-install.log'
+          $t0 = Get-Date
+          Start-Process $exe
+          $done = $false
+          for ($i=0; $i -lt 60; $i++) { Start-Sleep 3; if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'finished:' -Quiet)) { $done = $true; break } }
+          "helper finished: $done after $([int]((Get-Date)-$t0).TotalSeconds) s"
+          Start-Sleep 25
+          "===== ext-install.log ====="; Get-Content $log -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '"step"' }
+          "===== extState ====="; (Get-Content (Join-Path $env:APPDATA 'IBRA ANTIVIRUS\settings.json') -Raw | ConvertFrom-Json).extState | ConvertTo-Json -Compress
+          "browsers running after: $((Get-Process msedge,chrome -ErrorAction SilentlyContinue).Count)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: setup
+          path: dist/*.exe
+          retention-days: 1

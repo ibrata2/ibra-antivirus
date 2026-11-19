@@ -193,7 +193,8 @@ public static class ExtensionInstaller
             Say(L.F("فتح {0} على صفحة الإضافات…", browser.Name));
             var before = BrowserWindows(browser.ProcessName).Select(w => w.Handle).ToHashSet();
             var launched = DateTime.Now;
-            Process.Start(new ProcessStartInfo(browser.Exe) { UseShellExecute = false, Arguments = "--no-first-run --no-default-browser-check --new-window " + browser.ExtensionsPage });
+            // UseShellExecute = true: the browser must not inherit this helper's output pipes, or the app would wait for the browser to close
+            Process.Start(new ProcessStartInfo(browser.Exe) { UseShellExecute = true, Arguments = "--no-first-run --no-default-browser-check --new-window " + browser.ExtensionsPage });
 
             // The extensions page: a browser window in which the developer-mode switch can be found.
             // Browsers often ignore chrome://… addresses given on the command line and open a new tab instead,
