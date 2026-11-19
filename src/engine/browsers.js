@@ -85,9 +85,20 @@ function autoInstall({ which = 'all', skip = [], lang = 'ar', onLog = () => {} }
       }
     });
     p.stderr.on('data', d => onLog('[helper] ' + d.toString('utf8').trim()));
-    p.on('error', e => resolve({ ok: false, error: e.message }));
-    p.on('close', code => onLog('[helper] exit ' + code));
-    p.on('close', () => resolve({ ok: !!(final && final.ok), none: !!(final && final.none), cancelled: !!(final && final.cancelled), results, dir }));
+    let finished = false;
+    const finish = why => {
+      if (finished) return; finished = true;
+      clearTimeout(guard);
+      onLog('[helper] finished: ' + why);
+      try { p.stdout.destroy(); p.stderr.destroy(); } catch {}
+      resolve({ ok: !!(final && final.ok), none: !!(final && final.none), cancelled: !!(final && final.cancelled), timedOut: why === 'timeout', results, dir });
+    };
+    // A browser opened by the helper can keep its output pipe open, so never wait for 'close':
+    // finish on the final "done" line, on process exit, or after a safety timeout.
+    const guard = setTimeout(() => { try { p.kill(); } catch {} finish('timeout'); }, 150000);
+    p.stdout.on('data', () => { if (final) setTimeout(() => finish('done'), 300); });
+    p.on('exit', code => setTimeout(() => finish('exit ' + code), 500));
+    p.on('error', e => { if (!finished) { finished = true; clearTimeout(guard); resolve({ ok: false, error: e.message }); } });
   });
 }
 
