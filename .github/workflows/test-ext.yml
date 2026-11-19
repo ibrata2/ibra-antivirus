@@ -36,6 +36,14 @@ jobs:
               const reason = blocked ? (new URL(now).searchParams.get('r') + ' ' + (new URL(now).searchParams.get('w') || '')) : '';
               console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (reason ? '   [' + reason.trim() + ']' : ''));
             }
+            console.log('---- cloud only (block lists removed)');
+            await sw.evaluate(async () => { const r = await chrome.declarativeNetRequest.getDynamicRules(); await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: r.map(x => x.id) }); });
+            for (const u of process.env.PHISH.split(',').filter(Boolean)) {
+              try { await page.goto(u, { timeout: 20000, waitUntil: 'domcontentloaded' }); } catch (e) {}
+              await new Promise(r => setTimeout(r, 3500));
+              const now = page.url(); const blocked = now.includes('warning.html');
+              console.log((blocked ? 'BLOCKED ' : 'open    ') + u + (blocked ? '   [' + new URL(now).searchParams.get('r') + ']' : ''));
+            }
             await page.goto('https://verificationuser.org/').catch(() => {});
             await new Promise(r => setTimeout(r, 3000));
             await page.screenshot({ path: 'warning.png' });
