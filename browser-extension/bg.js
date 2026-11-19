@@ -70,12 +70,12 @@ function skeleton(s) {
 const LURE_STRONG = ['verification', 'verifications', 'verified', 'verify', 'login', 'logins', 'signin', 'signon', 'logon', 'authentication', 'authenticate', 'auth',
   'recovery', 'recover', 'unlock', 'unlocked', 'suspend', 'suspended', 'suspension', 'confirm', 'confirmation', 'validate', 'validation', 'reactivate', 'reactivation',
   'restore', 'secure', 'security', 'wallet', 'claim', 'claims', 'reward', 'rewards', 'airdrop', 'refund', 'refunds', 'billing', 'payment', 'payments', 'password',
-  'passwords', 'credential', 'credentials', 'appeal', 'appeals', 'checkpoint', 'unblock', 'locked', 'blocked', 'disabled', 'violation', 'copyright', 'giveaway', 'prize'];
+  'passwords', 'credential', 'credentials', 'activation', 'activate', 'activator', 'crack', 'cracked', 'keygen', 'unlocker', 'appeal', 'appeals', 'checkpoint', 'unblock', 'locked', 'blocked', 'disabled', 'violation', 'copyright', 'giveaway', 'prize'];
 const LURE_GENERIC = ['user', 'users', 'account', 'accounts', 'acc', 'acct', 'my', 'online', 'web', 'id', 'center', 'centre', 'support', 'help', 'service', 'services',
   'portal', 'info', 'team', 'official', 'app', 'apps', 'mail', 'page', 'pages', 'site', 'now', 'access', 'client', 'clients', 'customer', 'customers', 'member',
   'members', 'profile', 'safe', 'check', 'form', 'case', 'review', 'policy', 'update', 'updates', 'alert', 'alerts', 'notice', 'notification', 'notifications',
   'center', 'desk', 'online', 'verify', 'secure', 'new', 'live', 'net', 'pay', 'free', 'gift', 'bonus', 'auth', 'sso', 'two', 'factor', '2fa', 'mfa', 'otp', 'code', 'codes',
-  'confirm', 'process', 'request', 'requests', 'status', 'session', 'hub', 'zone', 'ticket', 'tickets', 'unusual', 'activity', 'limited', 'limit', 'urgent', 'quick'];
+  'confirm', 'process', 'request', 'mobile', 'phone', 'pc', 'download', 'downloads', 'file', 'files', 'key', 'keys', 'license', 'serial', 'full', 'version', 'win', 'windows', 'apk', 'mod', 'premium', 'pro', 'requests', 'status', 'session', 'hub', 'zone', 'ticket', 'tickets', 'unusual', 'activity', 'limited', 'limit', 'urgent', 'quick'];
 const LURE_SET = new Set([...LURE_STRONG, ...LURE_GENERIC]);
 const STRONG_SET = new Set(LURE_STRONG);
 const IDENTITY = new Set(['user', 'users', 'account', 'accounts', 'acc', 'acct', 'my', 'id', 'profile', 'member', 'members', 'client', 'clients', 'customer', 'customers',
@@ -105,7 +105,8 @@ function lureDomain(host) {
     // high: two phishing words, a phishing word + an identity word (user, account, id...), or three words or more
     const strong = w.filter(x => STRONG_SET.has(x)).length;
     const identity = w.some(x => IDENTITY.has(x));
-    if (strong >= 2 || identity || w.length >= 3) return { level: 'high', reason: 'lure', words: w.join(' + ') };
+    const riskyTld = /\.(top|xyz|click|icu|buzz|cfd|sbs|rest|monster|lol|quest|cyou|bond|mom|beauty|hair|skin|makeup|boats|autos|homes|yachts|motorcycles|zip|mov|live|online|site|website|store|shop|fun|space|pw|tk|ml|ga|cf|gq|cam|bar|surf|win|loan|work|date|racing|download|stream|review|country|kim|men|party|science|trade|accountant|faith|cricket|gdn|bid|link|cc|ws|su)$/i.test(host);
+    if (strong >= 2 || identity || w.length >= 3 || riskyTld) return { level: 'high', reason: 'lure', words: w.join(' + ') };
     return { level: 'medium', reason: 'lure', words: w.join(' + ') };
   }
   return null;
@@ -369,6 +370,19 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       reply(await settings());
     } else if (msg.type === 'update-lists') {
       reply(await updateLists(true));
+    } else if (msg.type === 'page-scam') {
+      const s = await settings();
+      const host = hostOf(msg.url || '');
+      const shared = SHARED.has(registrable(host)) && !PER_USER.test(host);
+      if (s.enabled && s.phishingHeuristics && sender.tab && host && !OWN.includes(host) && !shared && !(await isAllowed(host))) {
+        chrome.tabs.update(sender.tab.id, { url: chrome.runtime.getURL('warning.html') + `?r=scam&k=${encodeURIComponent(msg.kind || '')}#` + msg.url });
+      }
+      reply({ ok: true });
+    } else if (msg.type === 'page-suspicious') {
+      const s = await settings();
+      const ar = { locker: 'تطلب تنصيب برامج أو استبيانات مقابل التحميل', support: 'تحذير فيروسات مشكوك', prize: 'جائزة مشكوكة', allow: 'تطلب السماح بالإشعارات' };
+      const en = { locker: 'asks for installs or surveys to download', support: 'suspicious virus alert', prize: 'suspicious prize', allow: 'asks to allow notifications' };
+      reply({ text: ((s.lang === 'en' ? en : ar)[msg.kind]) || '' });
     } else if (msg.type === 'safe-exit') {
       if (sender.tab) chrome.tabs.update(sender.tab.id, { url: 'chrome://newtab/' });
       reply({ ok: true });
