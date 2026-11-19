@@ -1,0 +1,36 @@
+name: Test cloud reputation
+on:
+  push:
+    branches: [ test-ext ]
+jobs:
+  dns:
+    runs-on: windows-latest
+    steps:
+      - name: Protective DNS verdicts
+        shell: pwsh
+        run: |
+          $feed = (Invoke-WebRequest https://openphish.com/feed.txt -UseBasicParsing).Content -split "`n" | Where-Object { $_ } | Select-Object -First 400
+          $known = $feed | ForEach-Object { ([uri]$_).Host } | Sort-Object -Unique | Select-Object -First 25
+          $domains = @('verificationuser.org','google.com','github.com','bbc.co.uk','ibraprogram.netlify.app','zaincash.iq','asiacell.com','facebook.com') + $known
+          $resolvers = [ordered]@{
+            'cf-plain'   = 'https://cloudflare-dns.com/dns-query'
+            'cf-sec'     = 'https://security.cloudflare-dns.com/dns-query'
+            'quad9'      = 'https://dns.quad9.net:5053/dns-query'
+            'adguard'    = 'https://dns.adguard-dns.com/resolve'
+            'cleanbrows' = 'https://doh.cleanbrowsing.org/doh/security-filter/'
+          }
+          foreach ($d in $domains) {
+            $row = "{0,-45}" -f $d
+            foreach ($k in $resolvers.Keys) {
+              try {
+                $r = Invoke-RestMethod -Uri ($resolvers[$k] + "?name=$d&type=A") -Headers @{ accept = 'application/dns-json' } -TimeoutSec 10
+                $ans = ($r.Answer | Where-Object { $_.type -eq 1 } | Select-Object -First 1).data
+                $row += " | $k=$($r.Status):$ans"
+              } catch { $row += " | $k=ERR" }
+            }
+            $row
+          }
+          "---- in feeds?"
+          foreach ($u in 'https://phishing.army/download/phishing_army_blocklist.txt','https://urlhaus.abuse.ch/downloads/hostfile/','https://openphish.com/feed.txt') {
+            try { $c = (Invoke-WebRequest $u -UseBasicParsing).Content; "$u -> $([bool]($c -match 'verificationuser'))" } catch { "$u ERR" }
+          }
