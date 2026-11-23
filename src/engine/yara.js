@@ -20,10 +20,13 @@ function scan(files, cb, opts = {}) {
   return new Promise(resolve => {
     if (!installed() || !files.length) return resolve({ ok: false, skipped: true });
     const list = path.join(os.tmpdir(), `ibra-yara-${process.pid}-${Date.now()}.txt`);
-    fs.writeFileSync(list, files.join('\n'), 'utf8');
+    // YARA for Windows reads --scan-list as UTF-16 (wide) text: UTF-8 garbles every path ("could not open file")
+    fs.writeFileSync(list, Buffer.from(files.join('\r\n'), 'utf16le')); // no BOM: yara reads it as part of the first path
     const threads = String(Math.max(2, Math.min(8, os.cpus().length)));
     // yara [options] RULES_FILE... TARGET   (with --scan-list, TARGET is a text file of paths)
-    const a = ['-w', '-m', '-p', threads, '--skip-larger=' + ((opts.maxFileSizeMB || 150) * 1048576), '--scan-list', ...ruleFiles(), list];
+    const base = ['-w', '-m', '-p', threads, '--skip-larger=' + ((opts.maxFileSizeMB || 150) * 1048576)];
+    // a single file is passed directly (no list file needed)
+    const a = files.length === 1 ? [...base, ...ruleFiles(), files[0]] : [...base, '--scan-list', ...ruleFiles(), list];
     const p = spawn(exe(), a, { windowsHide: true });
     if (opts.register) opts.register(p);
     let buf = '';

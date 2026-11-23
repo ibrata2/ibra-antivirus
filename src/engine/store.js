@@ -31,7 +31,13 @@ class Store {
       extState: {},
       clipGuard: true,
       linkWatch: true,
-      linkHistory: []
+      linkHistory: [],
+      guard: true,
+      guardAdvanced: false,
+      guardAsked: false,
+      guardStats: { checked: 0, blocked: 0 },
+      guardLog: [],
+      guardTrusted: []
     };
     this.data = { ...this.defaults, ...this._read(this.file, {}) };
     this.history = this._read(this.histFile, []);

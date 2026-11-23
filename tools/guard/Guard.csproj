@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- .NET Framework 4.8 ships with Windows 10/11: nothing to install -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>ibra-guard</AssemblyName>
+    <RootNamespace>IbraAntivirus.Guard</RootNamespace>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Product>IBRA ANTIVIRUS Guard</Product>
+    <Company>IBRAPROGRAM</Company>
+    <Copyright>برمجة وتطوير ابراهيم الخزرجي</Copyright>
+    <Description>IBRA ANTIVIRUS behaviour guard</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Management" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

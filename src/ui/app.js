@@ -113,6 +113,7 @@ function renderHome() {
     { ic: IC.shield, t: L.rtTitle, d: L.rtDesc, on: S.realtime, key: 'realtime' },
     { ic: IC.usb, t: L.usbTitle, d: L.usbDesc, on: S.settings.usbAutoScan, key: 'usbAutoScan' },
     { ic: IC.db, t: L.dbTitle, d: dbText, on: c.installed && c.ready, extra: dbBar + (c.installed && !c.updating ? `<button class="btn ghost sm" id="tileDb">${esc(L.dbUpdate)}</button>` : '') },
+    ...(S.guard && S.guard.available ? [{ ic: IC.shield, t: L.gTitle, d: S.guard.enabled && S.guard.connected ? (S.guard.admin ? L.gOnAdv : L.gOnBasic + ' — ' + L.gAdvNeed) : L.gOff, on: !!(S.guard.enabled && S.guard.connected && S.guard.admin), page: 'protect' }] : []),
     { ic: IC.brain, t: L.ibraTitle, d: L.ibraDesc, on: true },
     { ic: IC.dna, t: L.yaraTitle, d: S.engines.yara ? L.yaraOn : L.yaraOff, on: S.engines.yara && S.settings.useYara },
     { ic: IC.win, t: L.defTitle, d: S.engines.defender ? L.defOn : L.defOff, on: S.engines.defender && S.settings.useDefender },
@@ -262,7 +263,34 @@ function row({ ic, t, d, key, val, soon, right }) {
   return `<div class="row glass ${soon ? 'soon' : ''}"><div class="ic">${ic}</div><div class="info"><b class="tx">${esc(t)}</b><p class="tx">${esc(d)}</p></div>
     ${soon ? `<span class="tag">${esc(L.soon)}</span>` : key ? `<button class="switch ${val ? 'on' : ''}" data-set="${key}"></button>` : ''}${right || ''}</div>`;
 }
+function renderGuard() {
+  const g = S.guard;
+  const card = $('#guardCard');
+  if (!g || !g.available) { card.innerHTML = `<div class="guard-top"><img class="shield" src="${SH.orange}" alt=""><div><h3 class="tx">${esc(L.gTitle)}</h3><p class="tx muted">${esc(L.gNotAvail)}</p></div></div>`; $('#guardLog').innerHTML = ''; return; }
+  const adv = g.enabled && g.connected && g.admin;
+  const basic = g.enabled && g.connected && !g.admin;
+  const status = !g.enabled ? L.gOff : adv ? L.gOnAdv : basic ? L.gOnBasic : L.gOff;
+  const feat = (t, d, on) => `<div class="gf ${on ? 'on' : ''}"><i></i><div><b class="tx">${esc(t)}</b><span class="tx muted">${esc(d)}</span></div></div>`;
+  const st = g.stats || { checked: 0, blocked: 0 };
+  card.innerHTML = `
+    <div class="guard-top"><img class="shield ${adv ? '' : ''}" src="${adv ? SH.green : SH.orange}" alt="">
+      <div style="flex:1"><h3 class="tx">${esc(L.gTitle)} — ${esc(status)}</h3><p class="tx muted">${esc(L.gDesc)}</p>${!adv && g.enabled ? `<p class="tx small" style="color:var(--orange);margin-top:4px">${esc(L.gAdvNeed)}</p>` : ''}</div>
+      <button class="switch ${g.enabled ? 'on' : ''}" data-set="guard"></button></div>
+    <div class="guard-feats">${feat(L.gF1, L.gF1d, g.enabled && g.connected)}${feat(L.gF2, L.gF2d, g.enabled && g.connected)}${feat(L.gF3, L.gF3d, adv && g.audit)}${feat(L.gF4, L.gF4d, adv && g.audit)}${feat(L.gF5, L.gF5d, g.enabled)}</div>
+    <div class="guard-stats"><div><b>${st.checked}</b><span class="tx">${esc(L.gChecked)}</span></div><div class="red"><b>${st.blocked}</b><span class="tx">${esc(L.gBlocked)}</span></div><div><b>${g.protected || 0}</b><span class="tx">${esc(L.gProt)}</span></div></div>
+    <div class="ex-btns">${g.advanced ? `<button class="btn ghost sm" id="gAdvOff">${esc(L.gDisableAdv)}</button>` : `<button class="btn primary" id="gAdvOn">${esc(L.gEnableAdv)}</button>`}</div>`;
+  bindSwitches(card);
+  const on = $('#gAdvOn'); if (on) on.onclick = async () => { on.disabled = true; on.textContent = L.gEnabling; await api.guardAdvanced(true); S = await api.state(); renderProtect(); };
+  const off = $('#gAdvOff'); if (off) off.onclick = async () => { await api.guardAdvanced(false); S = await api.state(); renderProtect(); };
+  const log = (g.log || []).filter(x => x.action !== 'checked');
+  $('#guardLog').innerHTML = log.length ? log.slice(0, 12).map(x => `<div class="item glass ${x.action === 'info' ? 'med' : ''}" data-gp="${esc(x.path || '')}"><div class="ic">${x.action === 'info' ? IC.globe : IC.bug}</div>
+    <div class="info"><b class="tx">${esc((L.gK && L.gK[x.kind]) || x.kind)}${x.what ? ' — ' + esc(x.what) : ''}${x.quarantined ? `<span class="tag done">${esc(L.quarantined)}</span>` : ''}</b>
+    <div class="path">${esc(x.path || '')}</div><div class="meta">${esc(fmtDate(x.date))}${x.name ? ' · ' + esc(x.name) : ''}${x.cmd ? ' · ' + esc(x.cmd.slice(0, 90)) : ''}</div></div>
+    ${x.action === 'info' && x.path ? `<div class="acts"><button class="btn ghost sm">${esc(L.gTrust)}</button></div>` : ''}</div>`).join('') : '';
+  $$('#guardLog [data-gp] button').forEach(b => b.onclick = async () => { await api.guardTrust(b.closest('[data-gp]').dataset.gp); toast('✔'); });
+}
 function renderProtect() {
+  renderGuard();
   const c = S.engines.clamav;
   $('#protectRows').innerHTML = [
     row({ ic: IC.shield, t: L.rtTitle, d: L.rtDesc, key: 'realtime', val: S.realtime }),
@@ -488,6 +516,7 @@ $('#lkPaste').onclick = () => { $('#lkInput').value = api.readClipboard(); runLi
 $('#lkClear').onclick = async () => { await api.linkHistoryClear(); renderLinkHistory(); };
 api.onLinkAuto(r => { if ($('#page-links').classList.contains('active')) renderLinkHistory(); });
 api.onClipBlocked(() => toast(L.clipBlocked));
+api.onGuardLog(log => { if (S && S.guard) { S.guard.log = log; if ($('#page-protect').classList.contains('active')) renderGuard(); } });
 
 // ---------------------------------------------------------------- start
 (async () => { S = await api.state(); render(); })();

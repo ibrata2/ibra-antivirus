@@ -18,11 +18,12 @@ const firewall = require('./engine/firewall');
 const browsers = require('./engine/browsers');
 const { Bridge } = require('./engine/bridge');
 const linkcheck = require('./engine/linkcheck');
+const { Guard } = require('./engine/guard');
 
 app.setAppUserModelId('com.ibraprogram.antivirus');
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
-let win, tray, store, quarantine, scanner, realtime, usb, bridge, fwMonitor;
+let win, tray, store, quarantine, scanner, realtime, usb, bridge, fwMonitor, guard;
 let fwProfiles = null;
 let quitting = false;
 let activeThreats = [];   // detected and not yet handled
@@ -38,6 +39,13 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - تهديد', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'تم عزله بالحجر الصحي',
     usbTitle: 'فلاشة جديدة', usbBody: d => `جاري فحص ${d}`, usbClean: d => `الفلاشة ${d} نظيفة ✔`,
     tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`,
+    gTitle: 'IBRA ANTIVIRUS أوقف هجوم!',
+    gStealer: (w, f) => `برنامج حاول يسرق ${w} (كلمات السر / الكوكيز / الجلسات) وانوقف فوراً وانعزل:\n${f}`,
+    gRansom: f => `برنامج فدية حاول يشفّر ملفاتك وانوقف فوراً وانعزل:\n${f}`,
+    gCommand: 'انوقف أمر خبيث (فخ «أنا لست روبوت») قبل ما ينزّل الفيروس.',
+    gLaunch: (n, f) => `منع تشغيل برنامج خبيث (${n}) وانعزل:\n${f}`,
+    gAskTitle: 'تفعيل الحماية المتقدمة', gAskMsg: 'فعّل «الحارس السلوكي المتقدم» حتى يحمي كلمات سر المتصفحات وجلسة التليكرام والمحافظ ويوقف الرانسوموير، مثل كاسبرسكي و ESET.',
+    gAskDetail: 'ويندوز راح يطلب موافقة المدير مرة وحدة بس.', gAskYes: 'فعّل الآن', gAskNo: 'لاحقاً',
     clipTitle: 'IBRA ANTIVIRUS منع أمر خطير', clipBody: 'موقع نسخ أمر خبيث للحافظة (فخ «أنا لست روبوت»). مسحناه — لا تلصق أي شي بنافذة Run.',
     linkTitle: 'رابط خطر!', linkBody: u => `الرابط اللي نسخته خطر، لا تفتحه:\n${u}`,
     fwNewTitle: 'برنامج جديد يتصل بالإنترنت', fwNewBody: n => `${n}\nاضغط هنا إذا تريد تمنعه`, siteBlocked: 'تم حظر موقع خطر بالمتصفح',
@@ -51,6 +59,13 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - Threat', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'Moved to quarantine',
     usbTitle: 'New USB drive', usbBody: d => `Scanning ${d}`, usbClean: d => `USB drive ${d} is clean ✔`,
     tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`,
+    gTitle: 'IBRA ANTIVIRUS stopped an attack!',
+    gStealer: (w, f) => `A program tried to steal ${w} (passwords / cookies / sessions); it was stopped and quarantined:\n${f}`,
+    gRansom: f => `Ransomware tried to encrypt your files; it was stopped and quarantined:\n${f}`,
+    gCommand: 'A malicious command (fake "I am not a robot" trap) was stopped before it downloaded malware.',
+    gLaunch: (n, f) => `A malicious program (${n}) was blocked from running and quarantined:\n${f}`,
+    gAskTitle: 'Turn on advanced protection', gAskMsg: 'Turn on the "advanced behaviour guard" to protect browser passwords, Telegram sessions and wallets and stop ransomware, like Kaspersky and ESET.',
+    gAskDetail: 'Windows will ask for administrator approval once.', gAskYes: 'Turn on now', gAskNo: 'Later',
     clipTitle: 'IBRA ANTIVIRUS blocked a dangerous command', clipBody: 'A site copied a malicious command to your clipboard (fake "I am not a robot" trap). It was cleared — never paste anything into Win+R.',
     linkTitle: 'Dangerous link!', linkBody: u => `The link you copied is dangerous, do not open it:\n${u}`,
     fwNewTitle: 'New program is using the internet', fwNewBody: n => `${n}\nClick here if you want to block it`, siteBlocked: 'A dangerous site was blocked in the browser',
@@ -73,7 +88,7 @@ function snapshot() {
   const db = clam.dbInfo();
   return {
     state: state(),
-    settings: (({ fwKnown, browserLog, fwBlockedCache, linkHistory, ...rest }) => rest)(store.all()),
+    settings: (({ fwKnown, browserLog, fwBlockedCache, linkHistory, guardLog, guardTrusted, ...rest }) => rest)(store.all()),
     scan: scanner.status(),
     activeThreats,
     lastResult,
@@ -86,6 +101,7 @@ function snapshot() {
     realtime: !!(realtime && realtime.active),
     usb: !!(usb && usb.timer),
     quarantineCount: quarantine.list().length,
+    guard: guard ? { ...guard.state, available: guard.available(), enabled: !!store.get('guard'), advanced: !!store.get('guardAdvanced'), stats: store.get('guardStats'), log: (store.get('guardLog') || []).slice(0, 40) } : null,
     browser: { connected: bridge ? bridge.status() : [], blocked: store.get('browserBlocked') || 0, log: (store.get('browserLog') || []).slice(0, 30) },
     firewall: { profiles: fwProfiles, blockedCount: (store.get('fwBlockedCache') || []).length, monitor: !!(fwMonitor && fwMonitor.timer) },
     version: app.getVersion(),
@@ -233,6 +249,7 @@ function setSetting(k, v) {
   if (k === 'usbAutoScan') v ? usb.start() : usb.stop();
   if (k === 'runAtStartup') applyStartup();
   if (k === 'fwAskNew') v ? fwMonitor.start() : fwMonitor.stop();
+  if (k === 'guard') v ? guard.start() : (guard.stop(), guard.started = false);
   refresh();
 }
 function applyStartup() {
@@ -480,6 +497,10 @@ function ipc() {
   ipcMain.handle('ext-log', () => { const f = P.data('ext-install.log'); if (fs.existsSync(f)) shell.showItemInFolder(f); return fs.existsSync(f); });
   ipcMain.handle('browser-folder', () => { try { const d = browsers.prepareExtension(); shell.openPath(d); return d; } catch { return null; } });
   ipcMain.handle('browser-log-clear', () => { store.set('browserLog', []); refresh(); return true; });
+  // ---- behaviour guard
+  ipcMain.handle('guard-advanced', async (_, on) => { const r = on ? await guard.enableAdvanced() : await guard.disableAdvanced(); refresh(); return r; });
+  ipcMain.handle('guard-trust', (_, p) => { guard.trust(p); return true; });
+  ipcMain.handle('guard-log-clear', () => { store.set('guardLog', []); refresh(); return true; });
   // ---- link checker
   ipcMain.handle('link-check', async (_, text) => { const r = await linkcheck.check(text, { deep: true }); if (r.ok) addLinkHistory(r); return r; });
   ipcMain.handle('link-history', () => store.get('linkHistory') || []);
@@ -582,6 +603,18 @@ app.whenReady().then(() => {
   if (store.get('fwAskNew')) setTimeout(() => fwMonitor.start(), 8000);
   firewall.profiles().then(p => { fwProfiles = p; refresh(); });
 
+  // behaviour guard (like Kaspersky / ESET behaviour blockers)
+  guard = new Guard({ store, scanner, quarantine });
+  guard.on('state', () => refresh());
+  guard.on('log', () => push('guard-log', (store.get('guardLog') || []).slice(0, 40)));
+  guard.on('blocked', ev => {
+    const f = ev.path ? path.basename(ev.path) : '';
+    const body = ev.kind === 'stealer' ? t().gStealer(ev.what || '', f) : ev.kind === 'ransomware' ? t().gRansom(f) : ev.kind === 'command' ? t().gCommand : t().gLaunch(ev.name || '', f);
+    notify(t().gTitle, body, () => push('navigate', 'protect'));
+    refresh();
+  });
+  if (store.get('guard')) guard.start();
+
   ipc();
   createWindow();
   tray = new Tray(nativeImage.createFromPath(iconFor('protected')).resize({ width: 16, height: 16 }));
@@ -602,12 +635,30 @@ app.whenReady().then(() => {
   const target = argScanTarget(process.argv);
   if (target) setTimeout(() => startScan({ type: 'custom', targets: [target] }), 1200);
 
+  if (process.argv.includes('--test-guard')) {
+    setTimeout(async () => {
+      const r = await guard.enableAdvanced();
+      fs.writeFileSync(P.data('guard-test.json'), JSON.stringify({ r, state: guard.state }, null, 2));
+    }, 4000);
+  }
   if (process.argv.includes('--test-ext-install')) {
     setTimeout(async () => {
       const r = await installExtension({ which: 'all', ask: false, quiet: true });
       fs.writeFileSync(P.data('ext-test-result.json'), JSON.stringify({ r, bridge: bridge.status() }, null, 2));
       quitting = true; app.exit(0);
     }, 3000);
+  }
+  // offer the advanced behaviour guard once (needs one administrator approval)
+  if (!STARTED_HIDDEN && guard.available() && !store.get('guardAdvanced') && !store.get('guardAsked') && !process.argv.includes('--test-ext-install')) {
+    setTimeout(async () => {
+      if (extInstalling) return;
+      store.set('guardAsked', true);
+      const r = await dialog.showMessageBox(win && win.isVisible() ? win : undefined, {
+        type: 'question', title: 'IBRA ANTIVIRUS', icon: P.asset('icon.png'), message: t().gAskMsg, detail: t().gAskDetail,
+        buttons: [t().gAskYes, t().gAskNo], defaultId: 0, cancelId: 1, noLink: true
+      });
+      if (r.response === 0) { await guard.enableAdvanced(); refresh(); }
+    }, 60000);
   }
   // install the browser extension automatically on every browser that does not have it yet
   // (same method as IBRA Download Manager). Each browser is tried at most 3 times; done once it connects.

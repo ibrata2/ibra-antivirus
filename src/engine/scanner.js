@@ -7,6 +7,7 @@ const clam = require('./clamav');
 const yara = require('./yara');
 const defender = require('./defender');
 const sys = require('./sys');
+const hashrep = require('./hashrep');
 
 const RISKY_EXT = new Set([
   '.exe', '.dll', '.scr', '.com', '.pif', '.cpl', '.sys', '.msi', '.msp', '.jar', '.lnk', '.inf',
@@ -240,12 +241,17 @@ class Scanner extends EventEmitter {
     const found = [];
     const h = heur.check(file, ctx);
     if (h) found.push({ name: h.name, severity: h.severity, engine: 'IBRA' });
+    // cloud reputation of programs and scripts (only the file's fingerprint is sent)
+    if (/\.(exe|dll|scr|com|msi|bat|cmd|ps1|vbs|js|hta|jar|lnk|zip|rar|7z|iso)$/i.test(file)) {
+      const hr = await hashrep.lookup(file, st.size);
+      if (hr && hr.detections >= 15) found.push({ name: `Cloud.KnownMalware (${hr.detections}%)`, severity: 'high', engine: 'Cloud' });
+    }
     const s = this.store.all();
     if (s.useYara && yara.installed()) await yara.scan([file], { onFound: t => found.push(t) });
     if (opt.clam && s.useClamAV && clam.installed() && clam.dbInfo().ready && !found.some(f => f.severity === 'high')) {
       await clam.scan([file], { onFound: t => found.push({ ...t, severity: 'high' }) }, { maxFileSizeMB: s.maxFileSizeMB });
     }
-    if (s.useDefender && defender.installed() && !found.some(f => f.severity === 'high')) {
+    if (s.useDefender && defender.installed() && !found.some(f => f.severity === 'high') && !(opt.launch && st.size > 80 * 1048576)) {
       const r = await defender.scanPath(file);
       for (const t of r.threats) found.push({ ...t, severity: 'high' });
     }

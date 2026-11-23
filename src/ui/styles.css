@@ -245,3 +245,19 @@ html[lang="ar"] .steps ol { direction: rtl; margin: 8px 22px 8px 0; }
 .lk-busy { margin-top: 14px; padding: 16px 20px; display: flex; gap: 12px; align-items: center; }
 .spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--green-soft); border-top-color: var(--green); animation: sp .8s linear infinite; }
 @keyframes sp { to { transform: rotate(360deg); } }
+
+/* ---------- behaviour guard ---------- */
+.guard-card { padding: 18px 20px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 12px; }
+.guard-top { display: flex; align-items: center; gap: 16px; }
+.guard-top .shield { width: 70px; height: 70px; }
+.guard-top h3 { margin: 0 0 2px; font-size: 19px; }
+.guard-feats { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.gf { display: flex; gap: 8px; align-items: flex-start; padding: 9px 11px; border-radius: 11px; background: rgba(255,255,255,.7); border: 1px solid var(--line); font-size: 12.5px; }
+.gf i { width: 9px; height: 9px; border-radius: 50%; background: #c2cbc6; flex: none; margin-top: 5px; }
+.gf.on i { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.gf b { display: block; font-size: 13px; }
+.guard-stats { display: flex; gap: 10px; }
+.guard-stats div { flex: 1; text-align: center; padding: 8px; border-radius: 11px; background: rgba(255,255,255,.7); border: 1px solid var(--line); }
+.guard-stats b { display: block; font-size: 20px; color: var(--green-2); }
+.guard-stats .red b { color: var(--red); }
+.guard-stats span { font-size: 11.5px; color: var(--muted); }

