@@ -20,7 +20,7 @@ const OWN = ['ibraprogram.netlify.app'];
 const BRANDS = {
   paypal: ['paypal.com', 'paypal.me'], facebook: ['facebook.com', 'fb.com', 'fb.me', 'facebook.net', 'fbcdn.net'],
   instagram: ['instagram.com', 'cdninstagram.com'], whatsapp: ['whatsapp.com', 'whatsapp.net', 'wa.me'],
-  telegram: ['telegram.org', 't.me', 'telegram.me'], apple: ['apple.com', 'icloud.com'], icloud: ['icloud.com', 'apple.com'],
+  telegram: ['telegram.org', 't.me', 'telegram.me', 'telegra.ph', 'telesco.pe'], apple: ['apple.com', 'icloud.com'], icloud: ['icloud.com', 'apple.com'],
   microsoft: ['microsoft.com', 'live.com', 'office.com', 'microsoftonline.com', 'outlook.com', 'windows.net', 'azure.com'],
   outlook: ['outlook.com', 'live.com', 'office.com', 'microsoft.com'], office365: ['office.com', 'microsoft.com', 'office365.com'],
   google: ['google.com', 'google.iq', 'googleusercontent.com', 'gstatic.com', 'youtube.com', 'goo.gl', 'g.co'],
@@ -141,6 +141,35 @@ async function cloudCheck(host) {
   return v;
 }
 
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+}
+let OFFICIAL_LABELS = null;
+function typosquat(reg) {
+  if (!OFFICIAL_LABELS) {
+    OFFICIAL_LABELS = new Map();
+    for (const [b, list] of Object.entries(BRANDS)) for (const d of list) { const l = d.split('.')[0]; if (l.length >= 5) OFFICIAL_LABELS.set(l, b); }
+  }
+  const label = reg.split('.')[0].replace(/-/g, '');
+  if (label.length < 5 || OFFICIAL_LABELS.has(label)) return null;
+  const sk = skeleton(label);
+  for (const [off, b] of OFFICIAL_LABELS) {
+    if (sk === off) return { level: 'high', reason: 'homograph', brand: b };          // faceb00k → facebook
+    const dist = editDistance(label, off);
+    if (dist === 0) continue;
+    const max = off.length >= 10 ? 2 : 1;
+    if (dist <= max) return { level: off.length >= 8 ? 'high' : 'medium', reason: 'brand', brand: b };
+  }
+  return null;
+}
+
 function heuristic(url) {
   let u; try { u = new URL(url); } catch { return null; }
   if (!/^https?:$/.test(u.protocol)) return null;
@@ -169,6 +198,9 @@ function heuristic(url) {
     if (lure || !regHasBrand || labels.includes(b)) return { level: 'high', reason: 'brand', brand: b };
     return { level: 'medium', reason: 'brand', brand: b };
   }
+  // 2b. one or two letters changed from an official name: steamcommunite.com, faceb00k-login.com, instagrarn.com
+  const ty = typosquat(reg);
+  if (ty) return ty;
   // 3. raw IP address asking for a login
   if (isIp(host) && LURE.test(u.pathname + u.search)) return { level: 'high', reason: 'ip-login' };
   // 4. credentials hidden in the URL: https://facebook.com@evil.com
@@ -322,6 +354,34 @@ chrome.webNavigation.onBeforeNavigate.addListener(async d => {
   }
 });
 
+// ------------------------------------------------------------------ download guard: stop programs coming from dangerous sites
+const RISKY_DL = /\.(exe|scr|msi|msix|bat|cmd|com|pif|js|jse|vbs|vbe|wsf|hta|lnk|ps1|jar|zip|rar|7z|iso|img|vhd|vhdx|apk|appx|reg|cpl|dll)$/i;
+chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+  (async () => {
+    try {
+      const s = await settings();
+      const name = (item.filename || '').split(/[\\/]/).pop();
+      if (!s.enabled || !RISKY_DL.test(name)) return;
+      const urls = [item.finalUrl || item.url, item.referrer].filter(u => /^https?:/.test(u || ''));
+      for (const u of urls) {
+        const host = hostOf(u);
+        if (!host || OWN.includes(host) || (await isAllowed(host))) continue;
+        let v = s.phishingHeuristics ? heuristic(u) : null;
+        if (!(v && v.level === 'high') && s.cloud !== false) v = await cloudCheck(host);
+        if (v && v.level === 'high') {
+          chrome.downloads.cancel(item.id);
+          await bump('download');
+          toApp('/event', { type: 'blocked', url: u, reason: 'download:' + name });
+          const L = T[s.lang] || T.ar;
+          chrome.notifications.create({ type: 'basic', iconUrl: 'icons/red-128.png', title: L.dlTitle, message: L.dlBody(s.lang === 'en' ? 'Download from a dangerous site was stopped' : 'تم إيقاف تحميل من موقع خطر', name), priority: 2 });
+          return;
+        }
+      }
+    } catch (e) {}
+  })().finally(() => { try { suggest(); } catch (e) {} });
+  return true;
+});
+
 // ------------------------------------------------------------------ downloads → scanned by IBRA ANTIVIRUS app
 chrome.downloads.onChanged.addListener(async delta => {
   if (!delta.state || delta.state.current !== 'complete') return;
@@ -374,14 +434,15 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       const s = await settings();
       const host = hostOf(msg.url || '');
       const shared = SHARED.has(registrable(host)) && !PER_USER.test(host);
-      if (s.enabled && s.phishingHeuristics && sender.tab && host && !OWN.includes(host) && !shared && !(await isAllowed(host))) {
+      if (msg.kind === 'clickfix') toApp('/event', { type: 'blocked', url: msg.url, reason: 'clickfix' });
+      if (s.enabled && s.phishingHeuristics && sender.tab && host && !OWN.includes(host) && (!shared || msg.kind === 'clickfix') && !(await isAllowed(host))) {
         chrome.tabs.update(sender.tab.id, { url: chrome.runtime.getURL('warning.html') + `?r=scam&k=${encodeURIComponent(msg.kind || '')}#` + msg.url });
       }
       reply({ ok: true });
     } else if (msg.type === 'page-suspicious') {
       const s = await settings();
-      const ar = { locker: 'تطلب تنصيب برامج أو استبيانات مقابل التحميل', support: 'تحذير فيروسات مشكوك', prize: 'جائزة مشكوكة', allow: 'تطلب السماح بالإشعارات' };
-      const en = { locker: 'asks for installs or surveys to download', support: 'suspicious virus alert', prize: 'suspicious prize', allow: 'asks to allow notifications' };
+      const ar = { locker: 'تطلب تنصيب برامج أو استبيانات مقابل التحميل', support: 'تحذير فيروسات مشكوك', prize: 'جائزة مشكوكة', allow: 'تطلب السماح بالإشعارات', clickfix: 'تطلب منك تفتح Win+R وتلصق شي — لا تسويها', command: 'الموقع نسخ أمر للحافظة — لا تلصقه بنافذة Run أو PowerShell' };
+      const en = { locker: 'asks for installs or surveys to download', support: 'suspicious virus alert', prize: 'suspicious prize', allow: 'asks to allow notifications', clickfix: 'asks you to open Win+R and paste — do not', command: 'the site copied a command — never paste it into Run or PowerShell' };
       reply({ text: ((s.lang === 'en' ? en : ar)[msg.kind]) || '' });
     } else if (msg.type === 'safe-exit') {
       if (sender.tab) chrome.tabs.update(sender.tab.id, { url: 'chrome://newtab/' });

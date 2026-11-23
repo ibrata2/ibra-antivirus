@@ -63,48 +63,33 @@
 // fake virus / tech-support alerts, fake prizes and "click Allow" notification traps.
 (() => {
   if (window.top !== window) return;
-  const RULES = [
-    // content lockers / offer walls
-    ['locker', 3, /complete\s+(\d+|one|two|three|a\s+few)\s+(short\s+|quick\s+|simple\s+)?(surveys?|offers?|tasks?)/i],
-    ['locker', 3, /install\s+(\d+|two|three|one)\s+(free\s+)?(apps?|applications?|games?)/i],
-    ['locker', 2, /(run|open|play)\s+(them|it|the\s+apps?)\s+for\s+\d+\s+(seconds|minutes)/i],
-    ['locker', 2, /(click|choose|select)\s+(on\s+)?(an?|another|any)\s+offer/i],
-    ['locker', 1, /download\s+will\s+(start|begin|unlock)\s+automatically/i],
-    ['locker', 1, /enter\s+(correct|valid|real)\s+(information|details|info)/i],
-    ['locker', 2, /(content|file|download)\s+(is\s+)?locked|unlock\s+(the\s+)?(content|download|file)/i],
-    ['locker', 2, /(human|bot)\s+verification|verify\s+(that\s+)?you(\s+a|')re\s+(a\s+)?human/i],
-    ['locker', 3, /أكمل\s*(\d+|اثنين|ثلاث)?\s*(استبيان|استبيانات|استطلاع|عروض|عرض)/],
-    ['locker', 2, /أدخل\s+رقم\s+(هاتفك|الهاتف|جوالك|التعريف)/],
-    ['locker', 2, /(انقر|اضغط)\s+للحصول\s+على\s+(مكافأ|جائز|هدي)/],
-    ['locker', 2, /(enter|submit)\s+your\s+(phone|mobile|cell)\s+(number)?\s*(to|and)\s+(download|unlock|get|receive|continue|win)/i],
-    // fake virus / tech support
-    ['support', 3, /(your\s+)?(computer|pc|windows|device|phone|iphone|android|system)\s+(is|has\s+been|may\s+be|was)\s+(infected|locked|blocked|compromised|hacked|damaged)/i],
-    ['support', 3, /call\s+(now\s+)?(microsoft|windows|apple|technical|tech|customer)?\s*support|call\s+(this\s+)?toll[\s-]?free/i],
-    ['support', 2, /(\d+)\s+viruses?\s+(detected|found)|virus(es)?\s+(alert|detected)\s*!/i],
-    ['support', 1, /(\+?1[\s-]?)?\(?8\d\d\)?[\s-]\d{3}[\s-]\d{4}/],
-    ['support', 3, /جهازك\s+(مصاب|مخترق|مقفل)|تم\s+(اختراق|قفل)\s+جهازك/],
-    // fake prizes
-    ['prize', 3, /congratulations?!?.{0,100}(you('ve|\s+have)?\s+(won|been\s+(selected|chosen))|winner)/is],
-    ['prize', 2, /claim\s+your\s+(free\s+)?(prize|reward|gift|iphone|samsung)/i],
-    ['prize', 2, /مبروك.{0,60}(ربحت|فزت|تم\s+اختيارك)/s],
-    // "click Allow" notification traps
-    ['allow', 5, /(click|press|tap)\s+["“']?allow["”']?\s+(to|if)\s+(continue|verify|watch|confirm|prove|download|play|access|you)/i],
-    ['allow', 5, /(اضغط|انقر)\s+(على\s+)?["“']?(سماح|السماح)["”']?\s+(للمتابعة|للتحقق|لمشاهدة|للتحميل)/]
-  ];
-  let done = false, warned = false, checks = 0;
+
+  let done = false, warned = false, checks = 0, copiedCommand = null;
+  // the page tried to put a command in the clipboard (reported by clipguard.js, which runs inside the page)
+  window.addEventListener('message', e => {
+    if (e.source !== window || !e.data || e.data.__ibraClip !== 1) return;
+    const lvl = IBRA_PAGE.command(String(e.data.text || ''));
+    if (!lvl) return;
+    copiedCommand = lvl;
+    if (lvl === 'block' && !done) {
+      done = true;
+      chrome.runtime.sendMessage({ type: 'page-scam', url: location.href, kind: 'clickfix', score: 10, command: String(e.data.text).slice(0, 500) });
+    } else if (!warned) {
+      warned = true;
+      chrome.runtime.sendMessage({ type: 'page-suspicious', kind: 'command' }, r => { if (r && r.text && window.__ibraWarn) window.__ibraWarn(r.text); });
+    }
+  });
   function scan() {
     if (done || !document.body) return;
     checks++;
     const text = (document.body.innerText || '').slice(0, 40000);
-    const score = {}; const hits = [];
-    for (const [kind, w, re] of RULES) if (re.test(text)) { score[kind] = (score[kind] || 0) + w; hits.push(kind); }
-    const [kind, best] = Object.entries(score).sort((a, b) => b[1] - a[1])[0] || [null, 0];
-    // scam walls are short pages; long articles that merely talk about scams need much more evidence
-    const need = text.length > 6000 ? 9 : 5;
-    if (best >= need) {
+    // scam walls are short pages; long articles that merely talk about scams need much more evidence (see rules.js)
+    const r = IBRA_PAGE.score(text);
+    const kind = r.kind, best = r.score;
+    if (r.level === 'high' || (kind === 'clickfix' && best >= 5 && copiedCommand)) {
       done = true;
       chrome.runtime.sendMessage({ type: 'page-scam', url: location.href, kind, score: best });
-    } else if (best >= 3 && !warned) {
+    } else if (r.level === 'medium' && !warned) {
       warned = true;
       chrome.runtime.sendMessage({ type: 'page-suspicious', kind }, r => { if (r && r.text && window.__ibraWarn) window.__ibraWarn(r.text); });
     }

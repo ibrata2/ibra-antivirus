@@ -56,6 +56,7 @@ function go(page) {
   if (page === 'settings') renderSettings();
   if (page === 'protect') renderProtect();
   if (page === 'browser') renderBrowser();
+  if (page === 'links') renderLinks();
   if (page === 'firewall') renderFirewall(true);
   clearInterval(fwTimer);
   if (page === 'firewall') fwTimer = setInterval(() => renderFirewall(false), 6000);
@@ -437,6 +438,56 @@ $('#fwPick').onclick = async () => { const r = await api.fwPick(); if (r.ok) toa
 $('#fwEnable').onclick = async () => { const r = await api.fwEnable(); toast(r.ok ? L.fwDone : L.fwDenied); renderFirewall(false); };
 api.onFwNew(c => { if (c.path) newApps.add(c.path.toLowerCase()); const fb = $('#fwBadge'); fb.textContent = newApps.size; fb.classList.add('on'); if ($('#page-firewall').classList.contains('active')) renderFirewall(false); });
 api.onNavigate(p => go(p));
+
+// ---------------------------------------------------------------- link checker page
+const VIMG = { safe: SH.green, warn: SH.orange, danger: SH.red };
+function reasonText(r) { const f = L.R[r.code]; return f ? f(r.detail) : r.code + (r.detail ? ' ' + r.detail : ''); }
+function linkCard(r) {
+  const title = r.verdict === 'danger' ? L.lkDanger : r.verdict === 'warn' ? L.lkWarn : L.lkSafe;
+  const sub = r.verdict === 'danger' ? L.lkDangerSub : r.verdict === 'warn' ? L.lkWarnSub : L.lkSafeSub;
+  const reasons = r.reasons.filter(x => x.level !== 'info' || r.verdict === 'safe');
+  const chain = (r.chain || []).map(c => c.url).filter((u, i, a) => a.indexOf(u) === i);
+  return `<div class="lk-card glass ${r.verdict}"><img class="shield" src="${VIMG[r.verdict]}" alt="">
+    <div class="info" style="flex:1;min-width:0"><h2 class="tx">${esc(title)}</h2><p class="tx muted">${esc(sub)}</p>
+    <div class="lk-reasons">${reasons.map(x => `<div class="lk-reason ${x.level}"><i></i><span class="tx">${esc(reasonText(x))}</span></div>`).join('')}</div>
+    ${chain.length ? `<div class="lk-chain">${chain.map(esc).join('<br>→ ')}</div>` : ''}</div></div>`;
+}
+async function runLinkCheck() {
+  const v = $('#lkInput').value.trim();
+  if (!v) return;
+  $('#lkGo').disabled = true;
+  $('#lkResult').innerHTML = `<div class="lk-busy glass"><div class="spin"></div><span class="tx">${esc(L.lkChecking)}</span></div>`;
+  const r = await api.linkCheck(v);
+  $('#lkGo').disabled = false;
+  $('#lkResult').innerHTML = r.ok ? linkCard(r) : `<div class="empty"><span class="tx">${esc(L.lkNoUrl)}</span></div>`;
+  renderLinkHistory();
+}
+async function renderLinkHistory() {
+  const h = await api.linkHistory();
+  $('#lkClear').hidden = !h.length;
+  $('#lkList').innerHTML = h.length ? h.map(r => `<div class="item glass ${r.verdict === 'safe' ? 'ok' : r.verdict === 'warn' ? 'med' : ''}" data-lk="${esc(r.final)}">
+    <div class="ic">${r.verdict === 'safe' ? IC.check : r.verdict === 'warn' ? IC.globe : IC.bug}</div>
+    <div class="info"><b class="tx">${esc(r.verdict === 'danger' ? L.lkDanger : r.verdict === 'warn' ? L.lkWarn : L.lkSafe)}${r.deep ? '' : `<span class="tag">${esc(L.lkAuto)}</span>`}</b>
+    <div class="path">${esc(r.final)}</div><div class="meta">${esc(fmtDate(r.date))}${r.reasons[0] && r.verdict !== 'safe' ? ' · ' + esc(reasonText(r.reasons[0])) : ''}</div></div>
+    <div class="acts"><button class="btn ghost sm">${esc(L.lkCheck)}</button></div></div>`).join('')
+    : `<div class="empty"><span class="tx">${esc(L.lkEmpty)}</span></div>`;
+  $$('#lkList [data-lk] button').forEach(b => b.onclick = () => { $('#lkInput').value = b.closest('[data-lk]').dataset.lk; runLinkCheck(); });
+}
+function renderLinks() {
+  $('#lkInput').placeholder = L.lkPh;
+  $('#lkRows').innerHTML = [
+    row({ ic: IC.bug, t: L.lkClip, d: L.lkClipD, key: 'clipGuard', val: S.settings.clipGuard }),
+    row({ ic: IC.globe, t: L.lkWatch, d: L.lkWatchD, key: 'linkWatch', val: S.settings.linkWatch })
+  ].join('');
+  bindSwitches($('#lkRows'));
+  renderLinkHistory();
+}
+$('#lkGo').onclick = runLinkCheck;
+$('#lkInput').addEventListener('keydown', e => { if (e.key === 'Enter') runLinkCheck(); });
+$('#lkPaste').onclick = () => { $('#lkInput').value = api.readClipboard(); runLinkCheck(); };
+$('#lkClear').onclick = async () => { await api.linkHistoryClear(); renderLinkHistory(); };
+api.onLinkAuto(r => { if ($('#page-links').classList.contains('active')) renderLinkHistory(); });
+api.onClipBlocked(() => toast(L.clipBlocked));
 
 // ---------------------------------------------------------------- start
 (async () => { S = await api.state(); render(); })();

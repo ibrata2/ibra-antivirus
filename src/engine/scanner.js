@@ -133,7 +133,11 @@ class Scanner extends EventEmitter {
         const k = f.toLowerCase();
         if (seen.has(k) || this.isSelf(f) || this.q.isQuarantineFile(f)) continue;
         seen.add(k);
-        try { const st = fs.statSync(f); if (!st.isFile() || st.size > maxMB * 1048576) continue; } catch { continue; }
+        try {
+          const st = fs.statSync(f);
+          if (!st.isFile()) continue;
+          if (st.size > maxMB * 1048576) { const inf = heur.inflated(f, st.size); if (inf) addThreat({ path: f, name: inf.name, severity: inf.severity, engine: 'IBRA' }); continue; }
+        } catch { continue; }
         list.push(f);
       }
       if (job.cancelled) throw new Error('cancelled');
@@ -228,7 +232,11 @@ class Scanner extends EventEmitter {
   async checkFile(file, ctx = {}, opt = { clam: true }) {
     if (this.isSelf(file) || this.store.isExcluded(file) || this.q.isQuarantineFile(file)) return null;
     let st; try { st = fs.statSync(file); } catch { return null; }
-    if (!st.isFile() || st.size > (this.store.get('maxFileSizeMB') || 150) * 1048576) return null;
+    if (!st.isFile()) return null;
+    if (st.size > (this.store.get('maxFileSizeMB') || 150) * 1048576) {
+      const inf = heur.inflated(file, st.size);
+      return inf ? { path: file, name: inf.name, severity: inf.severity, engines: ['IBRA'] } : null;
+    }
     const found = [];
     const h = heur.check(file, ctx);
     if (h) found.push({ name: h.name, severity: h.severity, engine: 'IBRA' });

@@ -227,3 +227,21 @@ html[lang="ar"] .steps ol { direction: rtl; margin: 8px 22px 8px 0; }
 .btn.danger { background: rgba(214,31,44,.1); color: var(--red); border: 1px solid rgba(214,31,44,.25); }
 .btn.danger:hover { background: rgba(214,31,44,.18); }
 .item.new { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(240,122,18,.25), var(--shadow); }
+
+/* ---------- link checker ---------- */
+.lk-box { display: flex; gap: 10px; padding: 12px; align-items: center; margin-top: 6px; }
+.lk-input { flex: 1; font: inherit; font-size: 15px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: #fff; outline: none; min-width: 0; }
+.lk-input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.lk-card { margin-top: 14px; padding: 18px 20px; display: flex; gap: 18px; align-items: flex-start; border-width: 2px; }
+.lk-card.safe { border-color: rgba(18,161,80,.45); } .lk-card.warn { border-color: rgba(240,122,18,.55); } .lk-card.danger { border-color: rgba(214,31,44,.6); background: rgba(255,240,241,.8); }
+.lk-card .shield { width: 84px; height: 84px; flex: none; }
+.lk-card h2 { margin: 0 0 4px; font-size: 22px; }
+.lk-card.safe h2 { color: var(--green-2); } .lk-card.warn h2 { color: var(--orange); } .lk-card.danger h2 { color: var(--red); }
+.lk-reasons { margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.lk-reason { display: flex; gap: 8px; align-items: baseline; font-size: 13.5px; }
+.lk-reason i { width: 9px; height: 9px; border-radius: 50%; flex: none; background: #b9c2bd; transform: translateY(1px); }
+.lk-reason.high i { background: var(--red); } .lk-reason.medium i { background: var(--orange); } .lk-reason.low i { background: #e2b33c; }
+.lk-chain { margin-top: 10px; font-size: 12px; color: var(--muted); direction: ltr; text-align: left; word-break: break-all; font-family: Consolas, monospace; }
+.lk-busy { margin-top: 14px; padding: 16px 20px; display: flex; gap: 12px; align-items: center; }
+.spin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--green-soft); border-top-color: var(--green); animation: sp .8s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }

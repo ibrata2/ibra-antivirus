@@ -254,3 +254,74 @@ rule USB_Worm_Shortcut_VBS
   condition:
     filesize < 2MB and $s1 and $s4 and 2 of ($s2, $s3, $s5, $s6)
 }
+
+rule Stealer_Crypto_Wallet_Extensions
+{
+  meta:
+    severity = "high"
+    description = "Steals crypto wallets from browser extensions (MetaMask, Phantom, Trust, TronLink...)"
+  strings:
+    $w1 = "nkbihfbeogaeaoehlefnkodbefgpgknn" ascii wide
+    $w2 = "bfnaelmomeimhlpmgjnjophhpkkoljpa" ascii wide
+    $w3 = "ibnejdfjmmkpcnlpebklmnkoeoihofec" ascii wide
+    $w4 = "egjidjbpglichdcondbcbdnbeeppgdph" ascii wide
+    $w5 = "hnfanknocfeofbddgcijnmhnfnkdnaad" ascii wide
+    $w6 = "fhbohimaelbohpjbbldcngcnapndodjp" ascii wide
+    $w7 = "fnjhmkhhmkbjkkabndcnnogagogbneec" ascii wide
+    $w8 = "aholpfdialjgjfhomihkjbmgjidlcdno" ascii wide
+    $w9 = "mcohilncbfahbmgdjkbpemcciiolgcge" ascii wide
+    $w10 = "dmkamcknogkgcdfhhbddcghachkejeap" ascii wide
+  condition:
+    uint16(0) == 0x5A4D and filesize < 60MB and 5 of them
+}
+
+rule Stealer_Telegram_Session
+{
+  meta:
+    severity = "high"
+    description = "Copies Telegram Desktop sessions (tdata) together with browser passwords"
+  strings:
+    $t1 = "Telegram Desktop\\tdata" nocase ascii wide
+    $t2 = "key_datas" ascii wide
+    $t3 = "D877F783D5D3EF8C" ascii wide
+    $b1 = "\\Login Data" ascii wide
+    $b2 = "\\Cookies" ascii wide
+    $b3 = "\\Network\\Cookies" ascii wide
+    $x1 = "encrypted_key" ascii wide
+    $x2 = "app_bound_encrypted_key" ascii wide
+  condition:
+    uint16(0) == 0x5A4D and filesize < 60MB and 2 of ($t*) and 2 of ($b*) and 1 of ($x*)
+}
+
+rule Stealer_Chrome_AppBound_Bypass
+{
+  meta:
+    severity = "high"
+    description = "Bypasses Chrome's cookie protection (App-Bound Encryption) to steal sessions"
+  strings:
+    $a1 = "app_bound_encrypted_key" ascii wide
+    $a2 = "IElevator" ascii wide
+    $a3 = "DecryptData" ascii wide
+    $a4 = "--remote-debugging-port" ascii wide
+    $a5 = "Network.getAllCookies" ascii wide
+    $a6 = "Storage.getCookies" ascii wide
+    $b1 = "\\Google\\Chrome\\User Data" nocase ascii wide
+  condition:
+    uint16(0) == 0x5A4D and filesize < 60MB and $b1 and ($a1 and ($a2 or $a3) or ($a4 and 1 of ($a5, $a6)))
+}
+
+rule ClickFix_Payload_Script
+{
+  meta:
+    severity = "high"
+    description = "Script from a fake 'I am not a robot' page that downloads and runs malware"
+  strings:
+    $c1 = /powershell[^\n]{0,80}-w(indowstyle)?\s+h(idden)?[^\n]{0,200}(iwr|irm|invoke-webrequest|invoke-restmethod|downloadstring|net\.webclient)/ nocase
+    $c2 = /mshta(\.exe)?\s+["']?https?:\/\// nocase
+    $c3 = /(iwr|irm|invoke-restmethod)\s+["']?https?:\/\/[^\s"']+["']?\s*\|\s*iex/ nocase
+    $d1 = "robot" nocase
+    $d2 = "captcha" nocase
+    $d3 = "verification" nocase
+  condition:
+    uint16(0) != 0x5A4D and filesize < 2MB and (($c2) or (($c1 or $c3) and 1 of ($d*)))
+}

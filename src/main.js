@@ -17,6 +17,7 @@ const { RealTime, UsbMonitor } = require('./engine/realtime');
 const firewall = require('./engine/firewall');
 const browsers = require('./engine/browsers');
 const { Bridge } = require('./engine/bridge');
+const linkcheck = require('./engine/linkcheck');
 
 app.setAppUserModelId('com.ibraprogram.antivirus');
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
@@ -37,6 +38,8 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - تهديد', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'تم عزله بالحجر الصحي',
     usbTitle: 'فلاشة جديدة', usbBody: d => `جاري فحص ${d}`, usbClean: d => `الفلاشة ${d} نظيفة ✔`,
     tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`,
+    clipTitle: 'IBRA ANTIVIRUS منع أمر خطير', clipBody: 'موقع نسخ أمر خبيث للحافظة (فخ «أنا لست روبوت»). مسحناه — لا تلصق أي شي بنافذة Run.',
+    linkTitle: 'رابط خطر!', linkBody: u => `الرابط اللي نسخته خطر، لا تفتحه:\n${u}`,
     fwNewTitle: 'برنامج جديد يتصل بالإنترنت', fwNewBody: n => `${n}\nاضغط هنا إذا تريد تمنعه`, siteBlocked: 'تم حظر موقع خطر بالمتصفح',
     extAskTitle: 'تنصيب حماية المتصفح', extAskMsg: b => `IBRA ANTIVIRUS راح ينصّب إضافة الحماية تلقائياً على: ${b}`,
     extAskDetail: '⚠ لا تضغط على أي شيء ولا تحرّك الماوس لحين انتهاء التنصيب (حوالي ١٥ ثانية لكل متصفح).', extStart: 'ابدأ التنصيب', extLater: 'لاحقاً',
@@ -48,6 +51,8 @@ const T = {
     threatTitle: 'IBRA ANTIVIRUS - Threat', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'Moved to quarantine',
     usbTitle: 'New USB drive', usbBody: d => `Scanning ${d}`, usbClean: d => `USB drive ${d} is clean ✔`,
     tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`,
+    clipTitle: 'IBRA ANTIVIRUS blocked a dangerous command', clipBody: 'A site copied a malicious command to your clipboard (fake "I am not a robot" trap). It was cleared — never paste anything into Win+R.',
+    linkTitle: 'Dangerous link!', linkBody: u => `The link you copied is dangerous, do not open it:\n${u}`,
     fwNewTitle: 'New program is using the internet', fwNewBody: n => `${n}\nClick here if you want to block it`, siteBlocked: 'A dangerous site was blocked in the browser',
     extAskTitle: 'Install browser protection', extAskMsg: b => `IBRA ANTIVIRUS will install the protection extension automatically on: ${b}`,
     extAskDetail: '⚠ Do not click anything or move the mouse until it finishes (about 15 seconds per browser).', extStart: 'Start', extLater: 'Later',
@@ -68,7 +73,7 @@ function snapshot() {
   const db = clam.dbInfo();
   return {
     state: state(),
-    settings: (({ fwKnown, browserLog, fwBlockedCache, ...rest }) => rest)(store.all()),
+    settings: (({ fwKnown, browserLog, fwBlockedCache, linkHistory, ...rest }) => rest)(store.all()),
     scan: scanner.status(),
     activeThreats,
     lastResult,
@@ -365,6 +370,49 @@ async function autoExtensionCheck() {
   await installExtension({ only: todo, ask: false });
 }
 
+// ---------------------------------------------------------------- link history + clipboard guard
+function addLinkHistory(r) {
+  const h = (store.get('linkHistory') || []).filter(x => x.final !== r.final);
+  h.unshift({ input: r.input, final: r.final, verdict: r.verdict, reasons: r.reasons, chain: r.chain, download: r.download, deep: r.deep, date: r.date });
+  store.set('linkHistory', h.slice(0, 60));
+}
+let lastClip = null;
+const autoChecked = new Map();
+async function clipboardTick() {
+  const s = store.all();
+  if (!s.clipGuard && !s.linkWatch) return;
+  let text;
+  try { text = require('electron').clipboard.readText(); } catch { return; }
+  if (lastClip === null) { lastClip = text; return; }      // ignore what was already there at start-up
+  if (!text || text === lastClip) return;
+  lastClip = text;
+  // 1. fake "I'm not a robot" pages copy a download-and-run command: clear it before it can be pasted into Win+R
+  if (s.clipGuard && linkcheck.command(text) === 'block') {
+    require('electron').clipboard.writeText('');
+    lastClip = '';
+    notify(t().clipTitle, t().clipBody);
+    const log = store.get('browserLog') || [];
+    log.unshift({ url: text.slice(0, 300), reason: 'clickfix', date: Date.now(), action: 'clipboard' });
+    store.set('browserLog', log.slice(0, 200));
+    push('clip-blocked', { text: text.slice(0, 300) });
+    refresh();
+    return;
+  }
+  // 2. a link copied from WhatsApp / Instagram / Telegram: reputation check only (the page is not opened)
+  if (s.linkWatch && text.length < 2000) {
+    const u = linkcheck.extractUrl(text);
+    if (!u || (autoChecked.has(u) && Date.now() - autoChecked.get(u) < 3600000)) return;
+    autoChecked.set(u, Date.now());
+    if (autoChecked.size > 500) autoChecked.clear();
+    try {
+      const r = await linkcheck.check(u, { deep: false });
+      if (!r.ok) return;
+      push('link-auto', r);
+      if (r.verdict === 'danger') { addLinkHistory(r); notify(t().linkTitle, t().linkBody(r.final), () => push('navigate', 'links')); }
+    } catch {}
+  }
+}
+
 // ---------------------------------------------------------------- IPC
 function ipc() {
   ipcMain.handle('state', () => snapshot());
@@ -432,6 +480,10 @@ function ipc() {
   ipcMain.handle('ext-log', () => { const f = P.data('ext-install.log'); if (fs.existsSync(f)) shell.showItemInFolder(f); return fs.existsSync(f); });
   ipcMain.handle('browser-folder', () => { try { const d = browsers.prepareExtension(); shell.openPath(d); return d; } catch { return null; } });
   ipcMain.handle('browser-log-clear', () => { store.set('browserLog', []); refresh(); return true; });
+  // ---- link checker
+  ipcMain.handle('link-check', async (_, text) => { const r = await linkcheck.check(text, { deep: true }); if (r.ok) addLinkHistory(r); return r; });
+  ipcMain.handle('link-history', () => store.get('linkHistory') || []);
+  ipcMain.handle('link-history-clear', () => { store.set('linkHistory', []); return []; });
   ipcMain.on('win', (_, a) => {
     if (!win) return;
     if (a === 'min') win.minimize();
@@ -537,6 +589,9 @@ app.whenReady().then(() => {
   updateTray();
 
   if (store.get('realtime')) realtime.start();
+  setInterval(clipboardTick, 900);
+  setTimeout(() => require('./engine/urlrep').refreshLists(false).catch(() => {}), 20000);
+  setInterval(() => require('./engine/urlrep').refreshLists(false).catch(() => {}), 3600 * 1000);
   if (store.get('usbAutoScan')) usb.start();
   applyStartup();
 

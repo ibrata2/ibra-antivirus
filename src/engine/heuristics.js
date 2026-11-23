@@ -119,4 +119,24 @@ function check(file, ctx = {}) {
   return null;
 }
 
-module.exports = { check, EICAR, EXEC_EXT, SCRIPT_EXT };
+/**
+ * Infostealers are often "inflated" to hundreds of MB with zero bytes so antivirus engines skip them (size limits)
+ * and upload sites refuse them. Reads only the last 4 MB.
+ */
+function inflated(file, size) {
+  if (!/\.(exe|scr|dll|msi|com)$/i.test(file) || size < 100 * 1048576) return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const head = Buffer.alloc(2); fs.readSync(fd, head, 0, 2, 0);
+    const isPE = head[0] === 0x4d && head[1] === 0x5a;
+    const n = 4 * 1048576; const buf = Buffer.alloc(n);
+    const got = fs.readSync(fd, buf, 0, n, size - n);
+    let zeros = 0, same = 0; const b0 = buf[0];
+    for (let i = 0; i < got; i++) { if (buf[i] === 0) zeros++; if (buf[i] === b0) same++; }
+    if (isPE && (zeros / got > 0.985 || same / got > 0.985)) return { name: 'Trick.InflatedExecutable', severity: 'high' };
+  } catch {} finally { if (fd !== undefined) try { fs.closeSync(fd); } catch {} }
+  return null;
+}
+
+module.exports = { check, inflated, EICAR, EXEC_EXT, SCRIPT_EXT };

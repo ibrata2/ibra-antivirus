@@ -28,7 +28,10 @@ class Store {
       browserBlocked: 0,
       browserLog: [],
       extAutoDone: false,
-      extState: {}
+      extState: {},
+      clipGuard: true,
+      linkWatch: true,
+      linkHistory: []
     };
     this.data = { ...this.defaults, ...this._read(this.file, {}) };
     this.history = this._read(this.histFile, []);
