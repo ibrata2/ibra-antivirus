@@ -86,7 +86,7 @@ class Guard extends EventEmitter {
           if (kind === 'task') { this.sock = send; this.mode = 'task'; this.stop(); }   // elevated guard replaces the basic one
           if (kind === 'task' && ev.admin) { try { for (const l of require('./guardplan').plan()) send(l); } catch {} }
           else if (this.mode !== 'task') { this.sock = send; this.mode = 'child'; }
-          this.setState({ connected: true, admin: !!ev.admin, mode: kind, protected: ev.protected || this.state.protected });
+          this.setState({ connected: true, admin: !!ev.admin, mode: kind, protected: ev.protected || this.state.protected, audit: !!ev.audit || this.state.audit });
           for (const p of this.trusted()) send('trust ' + p);
           continue;
         }

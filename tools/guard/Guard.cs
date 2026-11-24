@@ -65,6 +65,7 @@ namespace IbraAntivirus.Guard
         static readonly ConcurrentDictionary<int, bool> Handled = new ConcurrentDictionary<int, bool>();
         static readonly List<KeyValuePair<string, Target>> Targets = new List<KeyValuePair<string, Target>>();   // path prefix -> target
         static int Protected, ProtectErrors;
+        static volatile bool AuditOn;
 
         static readonly HashSet<string> ScriptHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "powershell.exe", "pwsh.exe", "powershell_ise.exe", "wscript.exe", "cscript.exe", "mshta.exe", "cmd.exe", "rundll32.exe", "regsvr32.exe",
@@ -125,6 +126,7 @@ namespace IbraAntivirus.Guard
                 EnablePrivilege("SeRestorePrivilege");
                 EnablePrivilege("SeTakeOwnershipPrivilege");
                 new Thread(StartAuditWatch) { IsBackground = true }.Start();
+                new Thread(SuspectLoop) { IsBackground = true }.Start();
                 if (Service) new Thread(SelfProtectLoop) { IsBackground = true }.Start();
             }
             StartProcessWatch();
@@ -142,7 +144,7 @@ namespace IbraAntivirus.Guard
             return 0;
         }
 
-        static void Hello() => Emit("{\"type\":\"hello\",\"version\":" + J(VERSION) + ",\"admin\":" + B(Admin) + ",\"token\":" + J(Token) + ",\"protected\":" + Protected + ",\"pid\":" + Process.GetCurrentProcess().Id + "}");
+        static void Hello() => Emit("{\"type\":\"hello\",\"version\":" + J(VERSION) + ",\"admin\":" + B(Admin) + ",\"token\":" + J(Token) + ",\"protected\":" + Protected + ",\"audit\":" + B(AuditOn) + ",\"pid\":" + Process.GetCurrentProcess().Id + "}");
 
         static void ConnectLoop()
         {
@@ -391,8 +393,75 @@ namespace IbraAntivirus.Guard
                     }
                     AddTarget(f, "decoy", "bait file");
                     AuditFile(f, rights, AuditFlags.Success | AuditFlags.Failure);
+                    WatchBait(folder);
                 }
                 catch { ProtectErrors++; }
+            }
+        }
+
+        // The audit event that names the culprit arrives up to a second late. A bait change is seen within milliseconds,
+        // so at that moment every suspect (unsigned program from a user folder / Temp / USB, or a script host) is paused;
+        // the culprit is killed when its audit event arrives and the others go on 3 s later.
+        static readonly ConcurrentDictionary<string, FileSystemWatcher> BaitWatch = new ConcurrentDictionary<string, FileSystemWatcher>(StringComparer.OrdinalIgnoreCase);
+        static readonly ConcurrentDictionary<int, bool> Frozen = new ConcurrentDictionary<int, bool>();
+        static readonly ConcurrentDictionary<int, string> Suspects = new ConcurrentDictionary<int, string>();
+        static void WatchBait(string folder)
+        {
+            if (BaitWatch.ContainsKey(folder)) return;
+            try
+            {
+                var w = new FileSystemWatcher(folder) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName, IncludeSubdirectories = false, InternalBufferSize = 65536 };
+                FileSystemEventHandler h = (s, e) => { if (e.Name != null && e.Name.IndexOf("IBRA-guard", StringComparison.OrdinalIgnoreCase) >= 0) FreezeSuspects(); };
+                w.Changed += h; w.Deleted += h; w.Renamed += (s, e) => { if ((e.OldName ?? "").IndexOf("IBRA-guard", StringComparison.OrdinalIgnoreCase) >= 0) FreezeSuspects(); };
+                w.EnableRaisingEvents = true;
+                BaitWatch[folder] = w;
+            }
+            catch { }
+        }
+        static int FreezeBusy;
+        static void FreezeSuspects()
+        {
+            if (Interlocked.Exchange(ref FreezeBusy, 1) == 1) return;
+            try
+            {
+                var me = Process.GetCurrentProcess().Id;
+                foreach (var kv in Suspects.ToArray())
+                    if (kv.Key != me && !Frozen.ContainsKey(kv.Key) && Suspend(kv.Key)) Frozen[kv.Key] = true;
+                new Thread(() =>
+                {
+                    Thread.Sleep(3000);
+                    foreach (var pid in Frozen.Keys.ToArray()) { if (!Handled.ContainsKey(pid)) Resume(pid); Frozen.TryRemove(pid, out _); }
+                    Interlocked.Exchange(ref FreezeBusy, 0);
+                }) { IsBackground = true }.Start();
+            }
+            catch { Interlocked.Exchange(ref FreezeBusy, 0); }
+        }
+        // keeps the list of suspects ready, so pausing them takes no time
+        static void SuspectLoop()
+        {
+            while (true)
+            {
+                try
+                {
+                    var alive = new HashSet<int>();
+                    foreach (var pr in Process.GetProcesses())
+                    {
+                        using (pr)
+                        {
+                            var pid = pr.Id; if (pid <= 4) continue;
+                            alive.Add(pid);
+                            if (Suspects.ContainsKey(pid)) continue;
+                            var img = ImagePath(pid); if (img == null || IsOurs(img) || UserTrusted.ContainsKey(img)) continue;
+                            var n = Path.GetFileName(img).ToLowerInvariant();
+                            if (n == "explorer.exe" || GlobalAllow.Contains(n)) continue;
+                            if (ScriptHosts.Contains(n) && n != "conhost.exe") { Suspects[pid] = img; continue; }
+                            if (Risky(img) && !Trusted(img)) Suspects[pid] = img;
+                        }
+                    }
+                    foreach (var pid in Suspects.Keys.ToArray()) if (!alive.Contains(pid)) Suspects.TryRemove(pid, out _);
+                }
+                catch { }
+                Thread.Sleep(700);
             }
         }
 
@@ -528,6 +597,7 @@ namespace IbraAntivirus.Guard
                 var w = new EventLogWatcher(q);
                 w.EventRecordWritten += (s, e) => { try { if (e.EventRecord != null) OnAccess(e.EventRecord); } catch { } };
                 w.Enabled = true;
+                AuditOn = true;
                 Emit("{\"type\":\"audit\",\"on\":true}");
             }
             catch (Exception e) { Emit("{\"type\":\"audit\",\"on\":false,\"error\":" + J(e.Message) + "}"); }

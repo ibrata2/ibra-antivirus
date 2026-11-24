@@ -14,10 +14,17 @@
   ReadEnvStr $0 LOCALAPPDATA
   StrCpy $1 "$0\Programs\IBRA ANTIVIRUS"
   ${If} $1 != $INSTDIR
-    ${If} ${FileExists} "$1\Uninstall IBRA ANTIVIRUS.exe"
-      ExecWait '"$1\Uninstall IBRA ANTIVIRUS.exe" /S _?=$1'
-      Delete "$1\Uninstall IBRA ANTIVIRUS.exe"
+    ${If} ${FileExists} "$1\*.*"
+      nsExec::Exec 'taskkill /f /im "IBRA ANTIVIRUS.exe"'
+      Pop $2
+      ${If} ${FileExists} "$1\Uninstall IBRA ANTIVIRUS.exe"
+        ExecWait '"$1\Uninstall IBRA ANTIVIRUS.exe" /S /currentuser _?=$1' $2
+      ${EndIf}
       RMDir /r "$1"
+      FileOpen $3 "$TEMP\ibra-install.log" w
+      FileWrite $3 "old=$1 uninstall-exit=$2"
+      FileClose $3
+      DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINSTALL_APP_KEY}"
     ${EndIf}
   ${EndIf}
 

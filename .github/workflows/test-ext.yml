@@ -119,6 +119,8 @@ jobs:
           $t0 = Get-Date; Start-Process $setup.FullName -ArgumentList '/S' -Wait; "install took $([int]((Get-Date)-$t0).TotalSeconds)s"
           $exe = "$env:ProgramFiles\IBRA ANTIVIRUS\IBRA ANTIVIRUS.exe"
           "new in Program Files: $(Test-Path $exe)   old per-user still there: $(Test-Path "$env:LOCALAPPDATA\Programs\IBRA ANTIVIRUS")"
+          "install log: $(Get-Content "$env:TEMP\ibra-install.log" -ErrorAction SilentlyContinue)"
+          Get-ChildItem "$env:LOCALAPPDATA\Programs\IBRA ANTIVIRUS" -ErrorAction SilentlyContinue | Select -First 8 | % { "  left: $($_.Name)" }
           $task = Get-ScheduledTask -TaskName 'IBRA ANTIVIRUS Guard' -ErrorAction SilentlyContinue
           "task: $($task.State) user=$($task.Principal.UserId) action=$($task.Actions.Execute) $($task.Actions.Arguments)"
           Start-Sleep 4
@@ -138,15 +140,15 @@ jobs:
           "===== SELF-PROTECTION"
           $main = Get-CimInstance Win32_Process -Filter "Name='IBRA ANTIVIRUS.exe'" | ? { $_.CommandLine -notmatch '--type=' } | Select -First 1
           "main app pid: $($main.ProcessId)"
-          Remove-Item C:\kill-result.txt -ErrorAction SilentlyContinue
-          runas /trustlevel:0x20000 "C:\killtest.exe $($main.ProcessId) C:\kill-result.txt"
-          for ($i=0; $i -lt 15 -and -not (Test-Path C:\kill-result.txt); $i++) { Start-Sleep 1 }
-          "normal (non-admin) program tries to kill the app: $(Get-Content C:\kill-result.txt -ErrorAction SilentlyContinue)"
+          Remove-Item C:\Users\Public\kill-result.txt -ErrorAction SilentlyContinue
+          runas /trustlevel:0x20000 "C:\killtest.exe $($main.ProcessId) C:\Users\Public\kill-result.txt"; "runas exit: $LASTEXITCODE"
+          for ($i=0; $i -lt 15 -and -not (Test-Path C:\Users\Public\kill-result.txt); $i++) { Start-Sleep 1 }
+          "normal (non-admin) program tries to kill the app: $(Get-Content C:\Users\Public\kill-result.txt -ErrorAction SilentlyContinue)"
           $g = Get-Process ibra-guard | Select -First 1
-          Remove-Item C:\kill-result.txt -ErrorAction SilentlyContinue
-          runas /trustlevel:0x20000 "C:\killtest.exe $($g.Id) C:\kill-result.txt"
-          for ($i=0; $i -lt 15 -and -not (Test-Path C:\kill-result.txt); $i++) { Start-Sleep 1 }
-          "normal program tries to kill the guard: $(Get-Content C:\kill-result.txt -ErrorAction SilentlyContinue)"
+          Remove-Item C:\Users\Public\kill-result.txt -ErrorAction SilentlyContinue
+          runas /trustlevel:0x20000 "C:\killtest.exe $($g.Id) C:\Users\Public\kill-result.txt"; "runas exit: $LASTEXITCODE"
+          for ($i=0; $i -lt 15 -and -not (Test-Path C:\Users\Public\kill-result.txt); $i++) { Start-Sleep 1 }
+          "normal program tries to kill the guard: $(Get-Content C:\Users\Public\kill-result.txt -ErrorAction SilentlyContinue)"
           "app still alive: $([bool](Get-Process -Id $main.ProcessId -ErrorAction SilentlyContinue))"
           "--- admin kills the app: the guard must start it again"
           Stop-Process -Id $main.ProcessId -Force; Start-Sleep 12
