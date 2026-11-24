@@ -1,18 +1,13 @@
-name: Guard binary for AV check
+name: Cleanup temporary release
 on:
   push:
     branches: [ test-ext ]
 permissions:
   contents: write
 jobs:
-  build:
-    runs-on: windows-latest
+  clean:
+    runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - shell: pwsh
-        run: |
-          dotnet build tools/guard/Guard.csproj -c Release -o tmp/guard
-          gh release delete guard-check -y --cleanup-tag 2>$null
-          gh release create guard-check tmp/guard/ibra-guard.exe --prerelease --title "temporary test" --notes "temporary" --target test-ext
+      - run: gh release delete guard-check -R ${{ github.repository }} -y --cleanup-tag || true
