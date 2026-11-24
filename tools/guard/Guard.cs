@@ -11,9 +11,16 @@
 //                      program or script that touches them is killed within milliseconds, even a brand-new virus.
 //  4. Ransomware guard — hidden bait files in your folders; whatever writes to them is killed before it reaches your files.
 //
-// Modes:  ibra-guard.exe --connect <port> --token-file <file>   (elevated, started by the "IBRA ANTIVIRUS Guard" task)
+//  5. Self-protection — the guard runs as a SYSTEM service; it locks the app's main process so normal programs cannot
+//                      kill it, and starts the app again if something closes it without the user's approval.
+//
+// Modes:  ibra-guard.exe --service                              (SYSTEM, started by the "IBRA ANTIVIRUS Guard" task)
+//         ibra-guard.exe --connect <port> --token-file <file>   (elevated, older task)
 //         ibra-guard.exe --stdio                                (not elevated: launch + command guard only)
-// Protocol: one JSON object per line. Commands from the app: "resume <pid>", "kill <pid>", "trust <path>", "protect", "ping".
+//         ibra-guard.exe --ok                                   (does nothing: run elevated to confirm an administrator approved)
+// Protocol: one JSON object per line. Commands from the app: "resume <pid>", "kill <pid>", "trust <path>", "ping",
+//           "watch <kind>\t<label>\t<path>\t<allowed,exes>" (what to guard, sent by the app), "bait <folder>", "risky <folder>",
+//           "safe <folder>", "apply", "bye" (the user really closed the app).
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -42,8 +49,9 @@ namespace IbraAntivirus.Guard
 
     internal static class Program
     {
-        const string VERSION = "1.0.0";
-        static bool Admin, Stdio;
+        const string VERSION = "1.1.0";
+        static bool Admin, Stdio, Service, System;
+        static volatile bool Bye, EverConnected;
         static int Port;
         static string Token = "";
         static readonly object OutLock = new object();
@@ -65,7 +73,7 @@ namespace IbraAntivirus.Guard
         };
         // processes that may read browser / Telegram data without being stopped (still must be validly signed)
         static readonly HashSet<string> GlobalAllow = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-            "ibra antivirus.exe", "ibra-guard.exe", "msmpeng.exe", "mpdefendercoreservice.exe", "ekrn.exe", "avp.exe", "searchprotocolhost.exe",
+            "ibra antivirus.exe", "ibra-guard.exe", "msmpeng.exe", "mpdefendercoreservice.exe", "searchprotocolhost.exe",
             "searchindexer.exe", "searchfilterhost.exe", "system", "registry", "svchost.exe", "lsass.exe", "dllhost.exe", "backgroundtaskhost.exe"
         };
 
@@ -94,11 +102,15 @@ namespace IbraAntivirus.Guard
         static int Main(string[] args)
         {
             string Arg(string n) { var i = Array.IndexOf(args, n); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
+            if (args.Contains("--ok")) return 0;
             Stdio = args.Contains("--stdio");
-            int.TryParse(Arg("--connect") ?? "0", out Port);
+            Service = args.Contains("--service");
+            int.TryParse(Arg("--connect") ?? (Service ? "47220" : "0"), out Port);
             var tf = Arg("--token-file");
             if (tf != null) { try { Token = File.ReadAllText(tf).Trim(); } catch { } }
             Admin = new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
+            System = WindowsIdentity.GetCurrent().IsSystem;
+            if (Service) Token = ServiceToken();
             try { AppDir = Path.GetFullPath(Path.Combine(SelfDir, "..", "..")).TrimEnd('\\'); } catch { AppDir = SelfDir; }
             Out = Stdio ? Console.Out : TextWriter.Null;
             Console.OutputEncoding = new UTF8Encoding(false);
@@ -110,7 +122,10 @@ namespace IbraAntivirus.Guard
             {
                 EnablePrivilege("SeSecurityPrivilege");
                 EnablePrivilege("SeDebugPrivilege");
-                new Thread(() => { Protect(); StartAuditWatch(); }) { IsBackground = true }.Start();
+                EnablePrivilege("SeRestorePrivilege");
+                EnablePrivilege("SeTakeOwnershipPrivilege");
+                new Thread(StartAuditWatch) { IsBackground = true }.Start();
+                if (Service) new Thread(SelfProtectLoop) { IsBackground = true }.Start();
             }
             StartProcessWatch();
             new Thread(SafetyLoop) { IsBackground = true }.Start();
@@ -141,7 +156,7 @@ namespace IbraAntivirus.Guard
                         var s = c.GetStream();
                         var w = new StreamWriter(s, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
                         lock (OutLock) Out = w;
-                        AppConnected = true;
+                        AppConnected = true; EverConnected = true; Bye = false;
                         Hello();
                         var r = new StreamReader(s, Encoding.UTF8);
                         string line;
@@ -166,7 +181,14 @@ namespace IbraAntivirus.Guard
                 case "resume": if (p.Length > 1 && int.TryParse(p[1], out pid)) { Resume(pid); Suspended.TryRemove(pid, out _); } break;
                 case "kill": if (p.Length > 1 && int.TryParse(p[1], out pid)) { Kill(pid); Suspended.TryRemove(pid, out _); } break;
                 case "trust": if (p.Length > 1) UserTrusted[p[1].Trim()] = true; break;
-                case "protect": if (Admin) new Thread(() => { Protect(); Emit("{\"type\":\"protected\",\"count\":" + Protected + ",\"errors\":" + ProtectErrors + "}"); }) { IsBackground = true }.Start(); break;
+                case "watch": if (p.Length > 1) lock (Plan) Plan.Add(p[1]); break;
+                case "bait": if (p.Length > 1) lock (Plan) Plan.Add("bait\t" + p[1].Trim()); break;
+                case "risky": if (p.Length > 1) lock (Roots) Roots.Add(p[1].Trim().TrimEnd('\\') + "\\"); break;
+                case "safe": if (p.Length > 1) lock (Roots) Safe.Add(p[1].Trim().TrimEnd('\\') + "\\"); break;
+                case "apply":
+                    if (Admin) { List<string> plan; lock (Plan) { plan = Plan.ToList(); Plan.Clear(); } new Thread(() => Protect(plan)) { IsBackground = true }.Start(); }
+                    break;
+                case "bye": Bye = true; break;
                 case "ping": Emit("{\"type\":\"pong\",\"admin\":" + B(Admin) + ",\"protected\":" + Protected + ",\"suspended\":" + Suspended.Count + "}"); break;
             }
         }
@@ -262,23 +284,27 @@ namespace IbraAntivirus.Guard
             catch (Exception e) { Emit("{\"type\":\"error\",\"where\":\"start\",\"msg\":" + J(e.Message) + "}"); }
         }
 
-        static readonly string[] RiskyRoots;
-        static readonly string[] SafeUnder;
+        // folders a downloaded / dropped program runs from; the app sends the user's own folders ("risky ...")
+        static readonly List<string> Roots = new List<string>();
+        static readonly List<string> Safe = new List<string>();
+        static readonly List<string> Plan = new List<string>();
         static Program()
         {
             string E(string v) => Environment.GetEnvironmentVariable(v) ?? "";
             var home = E("USERPROFILE");
-            RiskyRoots = new[] {
-                Path.Combine(home, "Downloads"), Path.Combine(home, "Desktop"), Path.Combine(home, "Documents"), Path.Combine(home, "Music"),
-                Path.Combine(home, "Pictures"), Path.Combine(home, "Videos"), E("APPDATA"), E("LOCALAPPDATA"), Path.Combine(home, "AppData", "LocalLow"),
-                E("TEMP"), E("PUBLIC"), E("ProgramData"), Path.Combine(E("windir"), "Temp"), Path.Combine(E("windir"), "Tasks")
-            }.Where(x => x.Length > 3).Select(x => x.TrimEnd('\\') + "\\").ToArray();
-            SafeUnder = new[] { Path.Combine(E("LOCALAPPDATA"), "Microsoft", "WindowsApps") + "\\", Path.Combine(E("ProgramData"), "Microsoft", "Windows Defender") + "\\" };
+            var list = new List<string> { E("PUBLIC"), E("ProgramData"), Path.Combine(E("windir"), "Temp"), Path.Combine(E("windir"), "Tasks") };
+            if (!WindowsIdentity.GetCurrent().IsSystem)
+                list.AddRange(new[] { Path.Combine(home, "Downloads"), Path.Combine(home, "Desktop"), Path.Combine(home, "Documents"), Path.Combine(home, "Music"),
+                    Path.Combine(home, "Pictures"), Path.Combine(home, "Videos"), E("APPDATA"), E("LOCALAPPDATA"), Path.Combine(home, "AppData", "LocalLow"), E("TEMP") });
+            Roots.AddRange(list.Where(x => x.Length > 3).Select(x => x.TrimEnd('\\') + "\\"));
+            Safe.Add(Path.Combine(E("ProgramData"), "Microsoft", "Windows Defender") + "\\");
         }
         static bool Risky(string path)
         {
-            if (SafeUnder.Any(s => path.StartsWith(s, StringComparison.OrdinalIgnoreCase))) return false;
-            if (RiskyRoots.Any(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase))) return true;
+            string[] safe, roots; lock (Roots) { safe = Safe.ToArray(); roots = Roots.ToArray(); }
+            if (path.IndexOf("\\Microsoft\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            if (safe.Any(s => path.StartsWith(s, StringComparison.OrdinalIgnoreCase))) return false;
+            if (roots.Any(r => path.StartsWith(r, StringComparison.OrdinalIgnoreCase))) return true;
             try { var root = Path.GetPathRoot(path); if (!string.IsNullOrEmpty(root) && new DriveInfo(root).DriveType == DriveType.Removable) return true; } catch { }
             return false;
         }
@@ -318,91 +344,169 @@ namespace IbraAntivirus.Guard
             catch { ProtectErrors++; }
         }
 
-        static void Protect()
+        // what to guard comes from the app (the guard file itself holds no list of other programs' data)
+        //   "<kind>\t<label>\t<path>\t<allowed exes>"   kind: file | dir | area (an area only names who may read it)
+        //   "bait\t<folder>"
+        static void Protect(List<string> plan)
         {
             lock (Targets) Targets.Clear();
             Protected = 0; ProtectErrors = 0;
-            string E(string v) => Environment.GetEnvironmentVariable(v) ?? "";
-            var local = E("LOCALAPPDATA"); var roaming = E("APPDATA"); var home = E("USERPROFILE");
             var read = FileSystemRights.ReadData;
-            string[] walletIds = {
-                "nkbihfbeogaeaoehlefnkodbefgpgknn", "bfnaelmomeimhlpmgjnjophhpkkoljpa", "ibnejdfjmmkpcnlpebklmnkoeoihofec", "egjidjbpglichdcondbcbdnbeeppgdph",
-                "hnfanknocfeofbddgcijnmhnfnkdnaad", "fhbohimaelbohpjbbldcngcnapndodjp", "fnjhmkhhmkbjkkabndcnnogagogbneec", "aholpfdialjgjfhomihkjbmgjidlcdno",
-                "mcohilncbfahbmgdjkbpemcciiolgcge", "dmkamcknogkgcdfhhbddcghachkejeap", "ejbalbakoplchlghecdalmeeeajnimhm", "acmacodkjbdgmoleebolmdjonilkdbch"
-            };
-            var browsers = new (string dir, string exe, string what)[] {
-                (Path.Combine(local, "Google", "Chrome", "User Data"), "chrome.exe", "Chrome"),
-                (Path.Combine(local, "Google", "Chrome Beta", "User Data"), "chrome.exe", "Chrome"),
-                (Path.Combine(local, "Microsoft", "Edge", "User Data"), "msedge.exe", "Edge"),
-                (Path.Combine(local, "BraveSoftware", "Brave-Browser", "User Data"), "brave.exe", "Brave"),
-                (Path.Combine(local, "Vivaldi", "User Data"), "vivaldi.exe", "Vivaldi"),
-                (Path.Combine(local, "Yandex", "YandexBrowser", "User Data"), "browser.exe", "Yandex"),
-                (Path.Combine(roaming, "Opera Software", "Opera Stable"), "opera.exe", "Opera"),
-                (Path.Combine(roaming, "Opera Software", "Opera GX Stable"), "opera.exe", "Opera GX"),
-            };
-            foreach (var (dir, exe, what) in browsers)
-            {
-                if (!Directory.Exists(dir)) continue;
-                var allowed = new[] { exe, "elevation_service.exe", "notification_helper.exe", "chrome_proxy.exe", "msedgewebview2.exe", "identity_helper.exe" };
-                AddTarget(dir, "credential", what, allowed);
-                AuditFile(Path.Combine(dir, "Local State"), read);                 // holds the key that decrypts passwords and cookies
-                var profiles = new List<string> { dir };
-                try { profiles.AddRange(Directory.GetDirectories(dir).Where(d => { var n = Path.GetFileName(d); return n == "Default" || n.StartsWith("Profile ") || n.StartsWith("Guest"); })); } catch { }
-                foreach (var p in profiles)
-                {
-                    foreach (var f in new[] { "Login Data", "Login Data For Account", "Web Data", "Cookies", Path.Combine("Network", "Cookies") }) AuditFile(Path.Combine(p, f), read);
-                    foreach (var id in walletIds) AuditDir(Path.Combine(p, "Local Extension Settings", id), read);
-                }
-            }
-            var ff = Path.Combine(roaming, "Mozilla", "Firefox", "Profiles");
-            if (Directory.Exists(ff))
-            {
-                AddTarget(ff, "credential", "Firefox", "firefox.exe", "plugin-container.exe", "crashreporter.exe");
-                try { foreach (var p in Directory.GetDirectories(ff)) foreach (var f in new[] { "logins.json", "key4.db", "cookies.sqlite" }) AuditFile(Path.Combine(p, f), read); } catch { }
-            }
-            var tg = Path.Combine(roaming, "Telegram Desktop", "tdata");
-            if (Directory.Exists(tg))
-            {
-                AddTarget(tg, "credential", "Telegram", "telegram.exe", "updater.exe");
-                AuditFile(Path.Combine(tg, "key_datas"), read);
-                try { foreach (var d in Directory.GetDirectories(tg).Where(d => Regex.IsMatch(Path.GetFileName(d), "^[0-9A-F]{16}$"))) AuditDir(d, read); } catch { }
-            }
-            foreach (var (d, exe, what) in new[] {
-                (Path.Combine(roaming, "discord", "Local Storage", "leveldb"), "discord.exe", "Discord"),
-                (Path.Combine(roaming, "Exodus", "exodus.wallet"), "exodus.exe", "Exodus wallet"),
-                (Path.Combine(roaming, "Electrum", "wallets"), "electrum.exe", "Electrum wallet"),
-                (Path.Combine(roaming, "Ethereum", "keystore"), "geth.exe", "Ethereum wallet"),
-                (Path.Combine(roaming, "atomic", "Local Storage", "leveldb"), "atomic wallet.exe", "Atomic wallet"),
-                (Path.Combine(roaming, "Binance", "Local Storage", "leveldb"), "binance.exe", "Binance")
-            }) { if (Directory.Exists(d)) { AddTarget(d, "credential", what, exe); AuditDir(d, read); } }
-
-            // ransomware bait files: hidden, first and last in every folder listing
             var bait = FileSystemRights.WriteData | FileSystemRights.AppendData | FileSystemRights.Delete;
-            // visible on purpose: Windows refuses overwriting a hidden file before any audit happens, so hidden bait never fires
-            foreach (var folder in new[] { Path.Combine(home, "Documents"), Path.Combine(home, "Pictures"), Path.Combine(home, "Downloads") })
+            foreach (var line in plan)
             {
-                if (!Directory.Exists(folder)) continue;
-                foreach (var name in new[] { "!IBRA-guard.docx", "~IBRA-guard.jpg" })
+                var f = line.Split('\t');
+                try
                 {
-                    var f = Path.Combine(folder, name);
-                    try
-                    {
-                        if (File.Exists(f)) File.SetAttributes(f, FileAttributes.Normal);
-                        else
-                        {
-                            var buf = new byte[48 * 1024]; new Random().NextBytes(buf);
-                            if (name.EndsWith(".docx")) { buf[0] = 0x50; buf[1] = 0x4B; buf[2] = 3; buf[3] = 4; } else { buf[0] = 0xFF; buf[1] = 0xD8; buf[2] = 0xFF; }
-                            File.WriteAllBytes(f, buf);
-                        }
-                        AddTarget(f, "decoy", "bait file");
-                        AuditFile(f, bait, AuditFlags.Success | AuditFlags.Failure);
-                    }
-                    catch { ProtectErrors++; }
+                    if (f[0] == "bait" && f.Length > 1) { MakeBait(f[1].Trim(), bait); continue; }
+                    if (f.Length < 3) continue;
+                    var p = f[2].Trim();
+                    var allowed = f.Length > 3 ? f[3].Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).ToArray() : new string[0];
+                    if (f[0] == "area") { if (Directory.Exists(p)) AddTarget(p, "credential", f[1], allowed); }
+                    else if (f[0] == "file") AuditFile(p, read);
+                    else if (f[0] == "dir") AuditDir(p, read);
                 }
+                catch { ProtectErrors++; }
             }
-            // File System auditing (success) — language-independent GUID
+            // File System auditing — language-independent GUID
             RunHidden("auditpol.exe", "/set /subcategory:{0CCE921D-69AE-11D9-BED3-505054503030} /success:enable /failure:enable");
             Emit("{\"type\":\"protected\",\"count\":" + Protected + ",\"errors\":" + ProtectErrors + "}");
+        }
+
+        // ransomware bait files (visible on purpose: Windows refuses overwriting a hidden file before any audit happens)
+        static void MakeBait(string folder, FileSystemRights rights)
+        {
+            if (!Directory.Exists(folder)) return;
+            foreach (var name in new[] { "!IBRA-guard.docx", "~IBRA-guard.jpg" })
+            {
+                var f = Path.Combine(folder, name);
+                try
+                {
+                    if (File.Exists(f)) File.SetAttributes(f, FileAttributes.Normal);
+                    else
+                    {
+                        var buf = new byte[48 * 1024]; new Random().NextBytes(buf);
+                        if (name.EndsWith(".docx")) { buf[0] = 0x50; buf[1] = 0x4B; buf[2] = 3; buf[3] = 4; } else { buf[0] = 0xFF; buf[1] = 0xD8; buf[2] = 0xFF; }
+                        File.WriteAllBytes(f, buf);
+                    }
+                    AddTarget(f, "decoy", "bait file");
+                    AuditFile(f, rights, AuditFlags.Success | AuditFlags.Failure);
+                }
+                catch { ProtectErrors++; }
+            }
+        }
+
+        // ---------------------------------------------------------------- 5. self-protection (service mode)
+        static string DataDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "IBRA ANTIVIRUS");
+
+        // random token the app must know; readable by users, writable only by SYSTEM / administrators
+        static string ServiceToken()
+        {
+            try
+            {
+                Directory.CreateDirectory(DataDir);
+                var ds = new DirectorySecurity();
+                ds.SetAccessRuleProtection(true, false);
+                var inh = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+                ds.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                ds.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+                ds.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, inh, PropagationFlags.None, AccessControlType.Allow));
+                Directory.SetAccessControl(DataDir, ds);
+                var f = Path.Combine(DataDir, "guard.token");
+                var t = File.Exists(f) ? File.ReadAllText(f).Trim() : "";
+                if (t.Length < 32) { var b = new byte[24]; new System.Security.Cryptography.RNGCryptoServiceProvider().GetBytes(b); t = BitConverter.ToString(b).Replace("-", "").ToLowerInvariant(); File.WriteAllText(f, t); }
+                return t;
+            }
+            catch { return ""; }
+        }
+
+        static readonly ConcurrentDictionary<int, bool> Locked = new ConcurrentDictionary<int, bool>(), Helpers = new ConcurrentDictionary<int, bool>();
+        static DateTime GoneSince = DateTime.MinValue;
+
+        static void SelfProtectLoop()
+        {
+            var appExe = Path.Combine(AppDir, "IBRA ANTIVIRUS.exe");
+            while (true)
+            {
+                Thread.Sleep(1500);
+                try
+                {
+                    bool running = false;
+                    foreach (var pr in Process.GetProcessesByName("IBRA ANTIVIRUS"))
+                    {
+                        using (pr)
+                        {
+                            var img = ImagePath(pr.Id);
+                            if (img == null || !img.Equals(appExe, StringComparison.OrdinalIgnoreCase)) continue;
+                            if (Helpers.ContainsKey(pr.Id)) continue;
+                            if (!Locked.ContainsKey(pr.Id) && (CommandLine(pr.Id) ?? "").Contains("--type=")) { Helpers[pr.Id] = true; continue; }   // a Chromium helper process
+                            running = true;
+                            if (!Locked.ContainsKey(pr.Id)) Locked[pr.Id] = LockProcess(pr.Id);
+                        }
+                    }
+                    var me = Process.GetCurrentProcess().Id;
+                    if (!Locked.ContainsKey(me)) Locked[me] = LockProcess(me);
+                    if (Locked.Count > 500) Locked.Clear(); if (Helpers.Count > 2000) Helpers.Clear();
+                    if (running || Bye || !EverConnected) { GoneSince = DateTime.MinValue; continue; }
+                    if (GoneSince == DateTime.MinValue) { GoneSince = DateTime.UtcNow; continue; }
+                    if ((DateTime.UtcNow - GoneSince).TotalSeconds < 4) continue;
+                    // the app was closed without the user's approval (killed): start it again in the user's session
+                    GoneSince = DateTime.UtcNow.AddSeconds(30);   // at most one try every ~30 s
+                    var ok = StartInUserSession("\"" + appExe + "\" --hidden --restarted", AppDir);
+                    Emit("{\"type\":\"restarted\",\"ok\":" + B(ok) + "}");
+                }
+                catch { }
+            }
+        }
+
+        // owner = Administrators, normal users may only look at the process — not end, pause, change or inject into it
+        [DllImport("advapi32.dll", SetLastError = true)] static extern int SetSecurityInfo(IntPtr h, int type, int info, byte[] owner, byte[] group, byte[] dacl, byte[] sacl);
+        static bool LockProcess(int pid)
+        {
+            var h = OpenProcess(0x00040000 /*WRITE_DAC*/ | 0x00080000 /*WRITE_OWNER*/ | 0x00020000 /*READ_CONTROL*/, false, pid);
+            if (h == IntPtr.Zero) return false;
+            try
+            {
+                var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+                var acl = new RawAcl(GenericAcl.AclRevision, 4);
+                acl.InsertAce(0, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, 0x1FFFFF, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), false, null));
+                acl.InsertAce(1, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, 0x1FFFFF, admins, false, null));
+                acl.InsertAce(2, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, 0x00020000, new SecurityIdentifier("S-1-3-4") /*OWNER RIGHTS*/, false, null));
+                acl.InsertAce(3, new CommonAce(AceFlags.None, AceQualifier.AccessAllowed, 0x00100000 | 0x1000 | 0x0400 | 0x0010 | 0x00020000,
+                    new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), false, null));   // SYNCHRONIZE, QUERY, VM_READ, READ_CONTROL
+                var dacl = new byte[acl.BinaryLength]; acl.GetBinaryForm(dacl, 0);
+                var owner = new byte[admins.BinaryLength]; admins.GetBinaryForm(owner, 0);
+                return SetSecurityInfo(h, 6 /*SE_KERNEL_OBJECT*/, 0x1 /*OWNER*/ | 0x4 /*DACL*/ | unchecked((int)0x80000000) /*PROTECTED_DACL*/, owner, null, dacl, null) == 0;
+            }
+            catch { return false; }
+            finally { CloseHandle(h); }
+        }
+
+        [DllImport("kernel32.dll")] static extern uint WTSGetActiveConsoleSessionId();
+        [DllImport("wtsapi32.dll", SetLastError = true)] static extern bool WTSQueryUserToken(uint session, out IntPtr token);
+        [DllImport("userenv.dll", SetLastError = true)] static extern bool CreateEnvironmentBlock(out IntPtr env, IntPtr token, bool inherit);
+        [DllImport("userenv.dll")] static extern bool DestroyEnvironmentBlock(IntPtr env);
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct STARTUPINFO { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags; public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError; }
+        [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        static extern bool CreateProcessAsUser(IntPtr token, string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, int flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
+        static bool StartInUserSession(string cmd, string dir)
+        {
+            if (!System) return false;
+            var sid = WTSGetActiveConsoleSessionId();
+            if (sid == 0xFFFFFFFF || !WTSQueryUserToken(sid, out var tok)) return false;
+            IntPtr env = IntPtr.Zero;
+            try
+            {
+                CreateEnvironmentBlock(out env, tok, false);
+                var si = new STARTUPINFO { cb = Marshal.SizeOf(typeof(STARTUPINFO)), lpDesktop = "winsta0\\default" };
+                if (!CreateProcessAsUser(tok, null, new StringBuilder(cmd), IntPtr.Zero, IntPtr.Zero, false, 0x00000400 /*UNICODE_ENVIRONMENT*/, env, dir, ref si, out var pi)) return false;
+                CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+                return true;
+            }
+            finally { if (env != IntPtr.Zero) DestroyEnvironmentBlock(env); CloseHandle(tok); }
         }
 
         static Target MatchTarget(string obj, out string prefix)
