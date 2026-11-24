@@ -1,7 +1,7 @@
 {
   "name": "ibra-antivirus",
   "productName": "IBRA ANTIVIRUS",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "IBRA ANTIVIRUS - برنامج حماية مجاني لويندوز",
   "author": "Ibrahim Al-Khazraji (IBRAPROGRAM)",
   "homepage": "https://ibraprogram.netlify.app/",
@@ -29,7 +29,8 @@
       { "from": "vendor", "to": "vendor", "filter": [ "**/*" ] },
       { "from": "rules", "to": "rules", "filter": [ "**/*" ] },
       { "from": "browser-extension", "to": "browser-extension", "filter": [ "**/*" ] },
-      { "from": "assets", "to": "assets", "filter": [ "**/*" ] }
+      { "from": "assets", "to": "assets", "filter": [ "**/*" ] },
+      { "from": "scripts", "to": "scripts", "filter": [ "**/*" ] }
     ],
     "win": {
       "target": [ { "target": "nsis", "arch": [ "x64" ] } ],
@@ -39,7 +40,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
+      "perMachine": true,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

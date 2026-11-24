@@ -1,7 +1,8 @@
 // IBRA ANTIVIRUS — behaviour guard controller (talks to tools/guard/ibra-guard.exe).
-// Basic mode   : the guard runs with the app (no admin) — launch guard + command guard.
-// Advanced mode: a "IBRA ANTIVIRUS Guard" scheduled task runs it elevated at every logon — adds the stealer guard
-//                (browser passwords, cookies, Telegram, wallets) and the ransomware guard, and survives app restarts.
+// Service mode : the installer registers the "IBRA ANTIVIRUS Guard" task that runs the guard as SYSTEM from boot —
+//                launch + command + stealer + ransomware guard, and self-protection of the app (normal programs cannot
+//                stop it or close the app). What to protect is sent from guardplan.js once it connects.
+// Basic mode   : no task (development / repair needed): the guard runs with the app, without admin rights.
 const EventEmitter = require('events');
 const net = require('net');
 const fs = require('fs');
@@ -23,6 +24,7 @@ class Guard extends EventEmitter {
     this.state = { connected: false, admin: false, mode: null, protected: 0, audit: false };
     this.cacheFile = P.data('guard-cache.json');
     try { this.clean = new Map(Object.entries(JSON.parse(fs.readFileSync(this.cacheFile, 'utf8')))); } catch { this.clean = new Map(); }
+    this.serviceTokenFile = path.join(process.env.ProgramData || 'C:\\ProgramData', 'IBRA ANTIVIRUS', 'guard.token');
     this.tokenFile = P.data('guard.token');
     try { this.token = fs.readFileSync(this.tokenFile, 'utf8').trim(); } catch { this.token = ''; }
     if (!this.token) { this.token = crypto.randomBytes(24).toString('hex'); try { fs.mkdirSync(P.data(), { recursive: true }); fs.writeFileSync(this.tokenFile, this.token); } catch {} }
@@ -37,11 +39,21 @@ class Guard extends EventEmitter {
     this.server = net.createServer(s => this.attach(s, 'task'));
     this.server.on('error', () => {});
     this.server.listen(PORT, '127.0.0.1');
-    if (this.store.get('guardAdvanced')) {
-      // the elevated task reconnects by itself; if it is not running (after an update) start it, then fall back to basic
-      setTimeout(() => { if (!this.state.connected) this.runTask(); }, 6000);
-      setTimeout(() => { if (!this.state.connected) this.startChild(); }, 15000);
-    } else this.startChild();
+    // the SYSTEM guard connects by itself within a few seconds; without it fall back to the basic guard
+    setTimeout(() => { if (!this.state.connected) this.startChild(); }, 9000);
+  }
+
+  serviceToken() { try { return fs.readFileSync(this.serviceTokenFile, 'utf8').trim(); } catch { return ''; } }
+  bye() { this.cmd('bye'); }
+
+  // the user approves with an administrator prompt (programs cannot click it) — used before closing the app
+  confirmAdmin() {
+    return new Promise(resolve => {
+      if (!this.available()) return resolve(true);
+      execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+        `try { $p = Start-Process -FilePath '${this.exe().replace(/'/g, "''")}' -ArgumentList '--ok' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; if ($p.ExitCode -eq 0) { 'ok' } } catch { 'denied' }`],
+      { windowsHide: true, timeout: 180000 }, (e, out) => resolve(/ok/.test(String(out || ''))));
+    });
   }
 
   stop() { try { this.child && this.child.kill(); } catch {} this.child = null; }
@@ -69,11 +81,12 @@ class Guard extends EventEmitter {
         if (!line) continue;
         let ev; try { ev = JSON.parse(line); } catch { continue; }
         if (ev.type === 'hello') {
-          if (kind === 'task' && ev.token !== this.token) { try { stream.destroy(); } catch {} return; }
+          if (kind === 'task' && (!ev.token || (ev.token !== this.token && ev.token !== this.serviceToken()))) { try { stream.destroy(); } catch {} return; }
           authed = true;
           if (kind === 'task') { this.sock = send; this.mode = 'task'; this.stop(); }   // elevated guard replaces the basic one
+          if (kind === 'task' && ev.admin) { try { for (const l of require('./guardplan').plan()) send(l); } catch {} }
           else if (this.mode !== 'task') { this.sock = send; this.mode = 'child'; }
-          this.setState({ connected: true, admin: !!ev.admin, mode: kind, protected: ev.protected || this.state.protected });
+          this.setState({ connected: true, admin: !!ev.admin, mode: kind, protected: ev.protected || this.state.protected, audit: !!ev.audit || this.state.audit });
           for (const p of this.trusted()) send('trust ' + p);
           continue;
         }
@@ -117,6 +130,7 @@ class Guard extends EventEmitter {
     if (ev.type === 'protected') return this.setState({ protected: ev.count });
     if (ev.type === 'audit') return this.setState({ audit: !!ev.on });
     if (ev.type === 'watch') return this.setState({ watch: ev.mode });
+    if (ev.type === 'restarted') return;
     if (ev.type === 'launch') return this.onLaunch(ev, send);
     if (ev.type === 'blocked') {
       const name = ev.kind === 'stealer' ? 'Behavior.Stealer' : ev.kind === 'ransomware' ? 'Behavior.Ransomware' : 'Behavior.MaliciousCommand';
@@ -164,32 +178,19 @@ class Guard extends EventEmitter {
   // ---------------------------------------------------------------- advanced mode (scheduled task, elevated)
   runTask() { execFile('schtasks.exe', ['/run', '/tn', TASK], { windowsHide: true }, () => {}); }
 
+  script() { return path.join(P.resRoot(), 'scripts', 'guard-task.ps1'); }
+
+  // repair: install the SYSTEM task again (the installer normally does this) — needs one administrator approval
   enableAdvanced() {
     return new Promise(resolve => {
-      const exe = this.exe();
-      const user = `${process.env.USERDOMAIN || ''}\\${process.env.USERNAME || ''}`.replace(/^\\/, '');
       const q = s => "'" + String(s).replace(/'/g, "''") + "'";
-      const script = [
-        `$a = New-ScheduledTaskAction -Execute ${q(exe)} -Argument ${q(`--connect ${PORT} --token-file "${this.tokenFile}"`)}`,
-        `$t1 = New-ScheduledTaskTrigger -AtLogOn -User ${q(user)}`,
-        `$t2 = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)`,
-        `$p = New-ScheduledTaskPrincipal -UserId ${q(user)} -LogonType Interactive -RunLevel Highest`,
-        `$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)`,
-        `Register-ScheduledTask -TaskName ${q(TASK)} -Action $a -Trigger @($t1,$t2) -Principal $p -Settings $s -Description 'IBRA ANTIVIRUS behaviour guard' -Force | Out-Null`,
-        `Start-ScheduledTask -TaskName ${q(TASK)}`
-      ].join('\r\n');
-      const tmp = path.join(require('os').tmpdir(), `ibra-guard-${Date.now()}.ps1`);
-      const done = tmp + '.done';
-      fs.writeFileSync(tmp, '﻿' + script + `\r\nSet-Content -Path ${q(done)} -Value ok\r\n`, 'utf8');
       execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-        `try { Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','"${tmp}"' } catch { 'denied' }`],
-      { windowsHide: true, timeout: 120000 }, () => {
-        const ok = fs.existsSync(done);
-        try { fs.unlinkSync(tmp); } catch {} try { fs.unlinkSync(done); } catch {}
+        `try { $p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',${q('"' + this.script() + '"')},'-Exe',${q('"' + this.exe() + '"')}; 'ok' } catch { 'denied' }`],
+      { windowsHide: true, timeout: 180000 }, (e, out) => {
+        const ok = /ok/.test(String(out || ''));
         if (ok) this.store.set('guardAdvanced', true);
-        // wait for the elevated guard to connect
         let n = 0;
-        const iv = setInterval(() => { if ((this.state.connected && this.state.admin) || ++n > 20) { clearInterval(iv); resolve({ ok: ok && this.state.admin, registered: ok }); } }, 500);
+        const iv = setInterval(() => { if ((this.state.connected && this.state.admin) || ++n > 30) { clearInterval(iv); resolve({ ok: ok && this.state.admin, registered: ok }); } }, 500);
       });
     });
   }

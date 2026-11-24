@@ -35,7 +35,7 @@ const STARTED_HIDDEN = process.argv.includes('--hidden');
 const T = {
   ar: {
     protected: 'جهازك محمي', scanning: 'جاري الفحص...', danger: 'تم اكتشاف تهديد!', open: 'فتح IBRA ANTIVIRUS',
-    quick: 'فحص سريع', pause: 'إيقاف الحماية الفورية', resume: 'تشغيل الحماية الفورية', quit: 'خروج',
+    quick: 'فحص سريع', pause: 'إيقاف الحماية الفورية', resume: 'تشغيل الحماية الفورية', quit: 'خروج', quitDenied: 'ما انسد البرنامج: لازم موافقة المدير حتى توقف الحماية',
     threatTitle: 'IBRA ANTIVIRUS - تهديد', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'تم عزله بالحجر الصحي',
     usbTitle: 'فلاشة جديدة', usbBody: d => `جاري فحص ${d}`, usbClean: d => `الفلاشة ${d} نظيفة ✔`,
     tray: 'IBRA ANTIVIRUS يشتغل بالخلفية ويحمي جهازك', scanDone: 'انتهى الفحص', clean: 'ما لكينا أي تهديد ✔', found: n => `تم اكتشاف ${n} تهديد`,
@@ -55,7 +55,7 @@ const T = {
   },
   en: {
     protected: 'Your PC is protected', scanning: 'Scanning...', danger: 'Threat detected!', open: 'Open IBRA ANTIVIRUS',
-    quick: 'Quick scan', pause: 'Pause real-time protection', resume: 'Resume real-time protection', quit: 'Exit',
+    quick: 'Quick scan', pause: 'Pause real-time protection', resume: 'Resume real-time protection', quit: 'Exit', quitDenied: 'Not closed: an administrator approval is needed to stop the protection',
     threatTitle: 'IBRA ANTIVIRUS - Threat', threatBody: (n, f) => `${n}\n${f}`, quarantined: 'Moved to quarantine',
     usbTitle: 'New USB drive', usbBody: d => `Scanning ${d}`, usbClean: d => `USB drive ${d} is clean ✔`,
     tray: 'IBRA ANTIVIRUS keeps running in the background', scanDone: 'Scan finished', clean: 'No threats found ✔', found: n => `${n} threat(s) found`,
@@ -101,7 +101,7 @@ function snapshot() {
     realtime: !!(realtime && realtime.active),
     usb: !!(usb && usb.timer),
     quarantineCount: quarantine.list().length,
-    guard: guard ? { ...guard.state, available: guard.available(), enabled: !!store.get('guard'), advanced: !!store.get('guardAdvanced'), stats: store.get('guardStats'), log: (store.get('guardLog') || []).slice(0, 40) } : null,
+    guard: guard ? { ...guard.state, available: guard.available(), enabled: !!store.get('guard'), advanced: !!guard.state.admin, stats: store.get('guardStats'), log: (store.get('guardLog') || []).slice(0, 40) } : null,
     browser: { connected: bridge ? bridge.status() : [], blocked: store.get('browserBlocked') || 0, log: (store.get('browserLog') || []).slice(0, 30) },
     firewall: { profiles: fwProfiles, blockedCount: (store.get('fwBlockedCache') || []).length, monitor: !!(fwMonitor && fwMonitor.timer) },
     version: app.getVersion(),
@@ -154,6 +154,19 @@ function showWindow() {
   win.show(); win.focus();
 }
 
+// closing the antivirus needs an administrator approval, so a virus cannot simply close it
+let quitAsking = false;
+async function confirmQuit() {
+  if (quitAsking) return;
+  quitAsking = true;
+  const ok = !app.isPackaged || !guard || !guard.state.admin ? true : await guard.confirmAdmin();
+  quitAsking = false;
+  if (!ok) return notify('IBRA ANTIVIRUS', t().quitDenied);
+  if (guard) guard.bye();
+  quitting = true;
+  setTimeout(() => app.quit(), 300);
+}
+
 function updateTray() {
   if (!tray) return;
   const s = state();
@@ -164,7 +177,7 @@ function updateTray() {
     { label: t().quick, enabled: !scanner.running, click: () => startScan({ type: 'quick' }) },
     { label: realtime.active ? t().pause : t().resume, click: () => setSetting('realtime', !realtime.active) },
     { type: 'separator' },
-    { label: t().quit, click: () => { quitting = true; app.quit(); } }
+    { label: t().quit, click: () => confirmQuit() }
   ]));
   if (win && !win.isDestroyed()) win.setIcon(nativeImage.createFromPath(iconFor(s)));
 }
@@ -465,7 +478,7 @@ function ipc() {
     return startScan({ type: 'custom', targets: [f] });
   });
   ipcMain.handle('app-update', () => checkAppUpdate(true));
-  ipcMain.handle('app-install-update', () => { try { quitting = true; require('electron-updater').autoUpdater.quitAndInstall(); } catch {} });
+  ipcMain.handle('app-install-update', () => { try { if (guard) guard.bye(); quitting = true; setTimeout(() => require('electron-updater').autoUpdater.quitAndInstall(), 300); } catch {} });
   // ---- firewall
   ipcMain.handle('fw-state', async () => {
     const [conns, blocked, profiles] = await Promise.all([firewall.connections(), firewall.blocked(), firewall.profiles()]);
@@ -531,8 +544,9 @@ function checkAppUpdate(manual) {
         // the app lives in the tray and is rarely closed, so install the update by itself when nothing is running
         const tryInstall = () => {
           if ((scanner && scanner.running) || extInstalling) return setTimeout(tryInstall, 60000);
+          if (guard) guard.bye();
           quitting = true;
-          updater.quitAndInstall(true, true);   // silent, start again after updating
+          setTimeout(() => updater.quitAndInstall(true, true), 300);   // silent, start again after updating
         };
         setTimeout(tryInstall, 20000);
       });
@@ -614,6 +628,7 @@ app.whenReady().then(() => {
     refresh();
   });
   if (store.get('guard')) guard.start();
+  try { require('electron').powerMonitor.on('shutdown', () => guard.bye()); } catch {}
 
   ipc();
   createWindow();
@@ -637,9 +652,10 @@ app.whenReady().then(() => {
 
   if (process.argv.includes('--test-guard')) {
     setTimeout(async () => {
-      const r = await guard.enableAdvanced();
-      fs.writeFileSync(P.data('guard-test.json'), JSON.stringify({ r, state: guard.state }, null, 2));
-    }, 4000);
+      // the SYSTEM guard (installed by the installer) must connect by itself
+      for (let i = 0; i < 60 && !(guard.state.connected && guard.state.admin && guard.state.protected); i++) await new Promise(r => setTimeout(r, 500));
+      fs.writeFileSync(P.data('guard-test.json'), JSON.stringify({ state: guard.state }, null, 2));
+    }, 2000);
   }
   if (process.argv.includes('--test-ext-install')) {
     setTimeout(async () => {
@@ -649,9 +665,9 @@ app.whenReady().then(() => {
     }, 3000);
   }
   // offer the advanced behaviour guard once (needs one administrator approval)
-  if (!STARTED_HIDDEN && guard.available() && !store.get('guardAdvanced') && !store.get('guardAsked') && !process.argv.includes('--test-ext-install')) {
+  if (!STARTED_HIDDEN && guard.available() && !store.get('guardAsked') && !process.argv.includes('--test-ext-install') && !process.argv.includes('--test-guard')) {
     setTimeout(async () => {
-      if (extInstalling) return;
+      if (extInstalling || guard.state.admin) return;   // the SYSTEM guard is running: nothing to ask
       store.set('guardAsked', true);
       const r = await dialog.showMessageBox(win && win.isVisible() ? win : undefined, {
         type: 'question', title: 'IBRA ANTIVIRUS', icon: P.asset('icon.png'), message: t().gAskMsg, detail: t().gAskDetail,
