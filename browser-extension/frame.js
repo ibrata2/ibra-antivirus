@@ -63,6 +63,8 @@
 // fake virus / tech-support alerts, fake prizes and "click Allow" notification traps.
 (() => {
   if (window.top !== window) return;
+  // IBRAPROGRAM's own sites are never scam pages
+  if (/(^|\.)ibraprogram\.netlify\.app$/i.test(location.hostname)) return;
 
   let done = false, warned = false, checks = 0, copiedCommand = null;
   // the page tried to put a command in the clipboard (reported by clipguard.js, which runs inside the page)

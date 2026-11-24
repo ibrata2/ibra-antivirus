@@ -35,7 +35,7 @@
     ['clickfix', 2, /(verify|verification|confirm)\s+(that\s+)?you\s+are\s+(a\s+)?human|i('|\s+a)m\s+not\s+a\s+robot|verification\s+steps?|cloudflare\s+verification/i],
     ['clickfix', 2, /(run|"run")\s+(dialog|box|window)|open\s+the\s+run\b|windows\s+\+\s*x/i],
     ['clickfix', 4, /(اضغط|انقر)\s+(على\s+)?(زر\s+)?(ويندوز|الويندوز|windows)\s*\+\s*r/i],
-    ['clickfix', 3, /الصق\s+(الكود|الأمر|الامر|النص)|(ctrl|كنترول)\s*\+\s*v/i],
+    ['clickfix', 3, /الصق\s+(الكود|الأمر|الامر|النص)\s+(في|ب)\s*(نافذة\s+)?(التشغيل|run|موجه)|كنترول\s*\+\s*v/i],
     ['clickfix', 2, /(تحقق|للتحقق|أثبت|اثبت)\s+(أنك|انك)\s+(إنسان|انسان|لست\s+روبوت)|لست\s+روبوت/]
   ];
   // A command copied to the clipboard that downloads and runs something (what ClickFix pages copy)
@@ -51,9 +51,12 @@
     return 'warn';
   }
   const VERIFY = /(verify|verification|human|robot|captcha|cloudflare|security\s+check|تحقق|التحقق|إنسان|انسان|روبوت)/i;
+  // a ClickFix trap always sends you to the Run box (Win+R / Windows key / Run dialog); Ctrl+V or "press Enter" alone is normal text
+  const RUN_BOX = /(win(dows)?\s*(key|logo\s*key)?\s*(\+|and|&)\s*["“']?r["”']?\b|⊞\s*\+\s*r\b|press\s+(and\s+hold\s+)?the\s+windows\s+key|(run|"run")\s+(dialog|box|window)|open\s+the\s+run\b|windows\s+\+\s*x|(ويندوز|الويندوز|windows)\s*\+\s*r|نافذة\s+التشغيل)/i;
   function score(text) {
     const sc = {};
     for (const [kind, w, re] of RULES) if (re.test(text)) sc[kind] = (sc[kind] || 0) + w;
+    if (sc.clickfix && !RUN_BOX.test(text)) delete sc.clickfix;
     const [kind, best] = Object.entries(sc).sort((a, b) => b[1] - a[1])[0] || [null, 0];
     const need = text.length > 6000 ? 9 : 5;
     let level = best >= need ? 'high' : best >= 3 ? 'medium' : null;
